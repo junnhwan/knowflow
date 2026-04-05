@@ -14,6 +14,7 @@ const state = {
   lastTools: [],
   lastMetrics: "",
   streamAbortController: null,
+  nextMessageId: 1,
 };
 
 const refs = {
@@ -384,7 +385,7 @@ async function onStreamQuery() {
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     assistantMessage.content = "";
-    renderMessages();
+    updateMessageContent(assistantMessage.id, assistantMessage.content);
 
     while (true) {
       const { value, done } = await reader.read();
@@ -395,7 +396,7 @@ async function onStreamQuery() {
       buffer = consumeSSE(buffer, (eventName, payload) => {
         if (eventName === "delta") {
           assistantMessage.content += payload.content || "";
-          renderMessages();
+          updateMessageContent(assistantMessage.id, assistantMessage.content);
           return;
         }
         if (eventName === "done") {
@@ -417,7 +418,7 @@ async function onStreamQuery() {
       return;
     }
     assistantMessage.content = `流式请求失败：${error.message}`;
-    renderMessages();
+    updateMessageContent(assistantMessage.id, assistantMessage.content);
     handleError("SSE 问答失败", error);
   } finally {
     state.streamAbortController = null;
@@ -506,12 +507,16 @@ function applyQueryResponse(data, isStreaming) {
 
   const answer = data.answer || data.Answer || "";
   if (isStreaming && state.messages.length > 0) {
-    state.messages[state.messages.length - 1].content = answer || state.messages[state.messages.length - 1].content;
+    const lastMessage = state.messages[state.messages.length - 1];
+    lastMessage.content = answer || lastMessage.content;
+    updateMessageContent(lastMessage.id, lastMessage.content);
   } else {
     addMessage("assistant", answer || "未返回回答内容");
   }
 
-  renderMessages();
+  if (!isStreaming) {
+    renderMessages();
+  }
   renderCitations();
   renderDebug();
 }
@@ -533,8 +538,15 @@ function normalizeCitation(item) {
   };
 }
 
+function newMessageId() {
+  const id = `msg-${state.nextMessageId}`;
+  state.nextMessageId += 1;
+  return id;
+}
+
 function addMessage(role, content) {
   const message = {
+    id: newMessageId(),
     role,
     content,
     createdAt: new Date().toISOString(),
@@ -542,6 +554,15 @@ function addMessage(role, content) {
   state.messages.push(message);
   renderMessages();
   return message;
+}
+
+function updateMessageContent(messageId, content) {
+  const contentNode = refs.messageTimeline.querySelector(`[data-message-id="${messageId}"] .message-content`);
+  if (!contentNode) {
+    renderMessages();
+    return;
+  }
+  contentNode.textContent = content || "";
 }
 
 function renderMessages() {
@@ -556,7 +577,7 @@ function renderMessages() {
     .map((message) => {
       const roleLabel = message.role === "user" ? "候选人提问" : "KnowFlow 回答";
       return `
-        <article class="message-card ${message.role}">
+        <article class="message-card ${message.role}" data-message-id="${escapeHtml(message.id)}">
           <div class="message-meta">
             <strong>${escapeHtml(roleLabel)}</strong>
             <span>${escapeHtml(formatTime(message.createdAt))}</span>
