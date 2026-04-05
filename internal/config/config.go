@@ -43,9 +43,9 @@ type ModelConfig struct {
 }
 
 type RetrievalConfig struct {
-	VectorTopK int
+	VectorTopK  int
 	KeywordTopK int
-	FinalTopK  int
+	FinalTopK   int
 }
 
 type MemoryConfig struct {
@@ -60,6 +60,10 @@ type ObservabilityConfig struct {
 }
 
 func Load() (Config, error) {
+	if err := loadDotEnv(".env"); err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		HTTP: HTTPConfig{
 			Port: getEnv("HTTP_PORT", "8080"),
