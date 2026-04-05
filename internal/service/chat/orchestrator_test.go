@@ -73,6 +73,84 @@ func TestOrchestrator_QueryReturnsAnswerAndCitations(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_QueryStreamUsesAnswererStreamAndPersistsFinalAnswer(t *testing.T) {
+	registry := tools.NewRegistry(tools.ServiceConfig{
+		Timeout: time.Second,
+	})
+	_ = registry.Register("retrieve_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		return tools.Output{
+			Status: "success",
+			Data: retrieval.Result{
+				Citations: []retrieval.Citation{
+					{
+						DocumentID: "doc-1",
+						SourceName: "intro.md",
+						ChunkID:    "chunk-1",
+						Snippet:    "KnowFlow keeps citations.",
+					},
+				},
+				Chunks: []retrieval.Candidate{
+					{
+						ChunkID:    "chunk-1",
+						DocumentID: "doc-1",
+						SourceName: "intro.md",
+						Content:    "KnowFlow keeps citations.",
+					},
+				},
+				Meta: retrieval.Metadata{Hit: true},
+			},
+		}, nil
+	}))
+
+	store := &fakeChatStore{}
+	answerer := &streamingFakeAnswerer{}
+	orch := NewOrchestrator(Dependencies{
+		ChatStore: store,
+		Memory:    fakeMemoryService{},
+		Tools:     registry,
+		Answerer:  answerer,
+		Now: func() time.Time {
+			return time.Unix(1700000000, 0)
+		},
+		NewID: func(prefix string) string {
+			return prefix + "-1"
+		},
+	})
+
+	var deltas []string
+	resp, err := orch.QueryStream(context.Background(), QueryRequest{
+		UserID:    "demo-user",
+		SessionID: "s-1",
+		Message:   "请流式回答 KnowFlow 的亮点",
+	}, func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("QueryStream() error = %v", err)
+	}
+
+	if !answerer.streamCalled {
+		t.Fatal("expected answerer stream to be called")
+	}
+
+	if len(deltas) != 2 {
+		t.Fatalf("expected 2 deltas, got %d", len(deltas))
+	}
+
+	if resp.Answer != "第一段第二段" {
+		t.Fatalf("unexpected final answer: %s", resp.Answer)
+	}
+
+	if len(store.messages) != 2 {
+		t.Fatalf("expected persisted user and assistant messages")
+	}
+
+	if store.messages[1].Content != "第一段第二段" {
+		t.Fatalf("unexpected persisted assistant answer: %s", store.messages[1].Content)
+	}
+}
+
 type fakeChatStore struct {
 	sessions map[string]chatdomain.Session
 	messages []chatdomain.Message
@@ -149,4 +227,23 @@ func (fakeAnswerer) Stream(ctx context.Context, req PromptRequest, onDelta func(
 		return PromptResult{}, err
 	}
 	return result, nil
+}
+
+type streamingFakeAnswerer struct {
+	streamCalled bool
+}
+
+func (*streamingFakeAnswerer) Generate(_ context.Context, _ PromptRequest) (PromptResult, error) {
+	return PromptResult{Answer: "不应走到同步回答"}, nil
+}
+
+func (f *streamingFakeAnswerer) Stream(_ context.Context, _ PromptRequest, onDelta func(string) error) (PromptResult, error) {
+	f.streamCalled = true
+	if err := onDelta("第一段"); err != nil {
+		return PromptResult{}, err
+	}
+	if err := onDelta("第二段"); err != nil {
+		return PromptResult{}, err
+	}
+	return PromptResult{Answer: "第一段第二段"}, nil
 }

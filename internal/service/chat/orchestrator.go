@@ -104,14 +104,63 @@ func NewOrchestrator(deps Dependencies) *Orchestrator {
 }
 
 func (o *Orchestrator) Query(ctx context.Context, req QueryRequest) (QueryResponse, error) {
-	sessionID, err := o.ensureSession(ctx, req)
+	result, err := o.prepareQuery(ctx, req)
+	if err != nil {
+		return QueryResponse{}, err
+	}
+	if result.response != nil {
+		return *result.response, nil
+	}
+
+	promptResult, err := o.answerer.Generate(ctx, result.prompt)
 	if err != nil {
 		return QueryResponse{}, err
 	}
 
-	history, err := o.memory.Load(ctx, req.UserID, sessionID)
+	return o.finalizeQuery(ctx, result, promptResult.Answer)
+}
+
+func (o *Orchestrator) QueryStream(ctx context.Context, req QueryRequest, onDelta func(string) error) (QueryResponse, error) {
+	result, err := o.prepareQuery(ctx, req)
 	if err != nil {
 		return QueryResponse{}, err
+	}
+	if result.response != nil {
+		if onDelta != nil {
+			if err := onDelta(result.response.Answer); err != nil {
+				return QueryResponse{}, err
+			}
+		}
+		return *result.response, nil
+	}
+
+	promptResult, err := o.answerer.Stream(ctx, result.prompt, onDelta)
+	if err != nil {
+		return QueryResponse{}, err
+	}
+
+	return o.finalizeQuery(ctx, result, promptResult.Answer)
+}
+
+type preparedQuery struct {
+	sessionID     string
+	request       QueryRequest
+	prompt        PromptRequest
+	citations     []retrieval.Citation
+	toolTraces    []tools.Trace
+	retrievalMeta retrieval.Metadata
+	response      *QueryResponse
+}
+
+func (o *Orchestrator) prepareQuery(ctx context.Context, req QueryRequest) (preparedQuery, error) {
+	sessionID, err := o.ensureSession(ctx, req)
+	if err != nil {
+		return preparedQuery{}, err
+	}
+
+	history, err := o.memory.Load(ctx, req.UserID, sessionID)
+	if err != nil {
+		return preparedQuery{}, err
 	}
 
 	trace := tools.Trace{ToolName: "retrieve_knowledge", Status: "success"}
@@ -129,7 +178,7 @@ func (o *Orchestrator) Query(ctx context.Context, req QueryRequest) (QueryRespon
 	if !retrievalResult.Meta.Hit || len(retrievalResult.Citations) == 0 {
 		answer := "当前知识库里没有足够依据来支持这个问题，请先补充相关面试资料或知识条目。"
 		if err := o.persistRound(ctx, sessionID, req.Message, answer, nil, nil); err != nil {
-			return QueryResponse{}, err
+			return preparedQuery{}, err
 		}
 		_, _ = o.memory.Update(ctx, memory.UpdateRequest{
 			UserID:    req.UserID,
@@ -139,46 +188,57 @@ func (o *Orchestrator) Query(ctx context.Context, req QueryRequest) (QueryRespon
 				{Role: "assistant", Content: answer},
 			},
 		})
-		return QueryResponse{
+		response := QueryResponse{
 			SessionID:     sessionID,
 			Answer:        answer,
 			Citations:     nil,
 			ToolTraces:    []tools.Trace{trace},
 			RetrievalMeta: retrievalResult.Meta,
+		}
+		return preparedQuery{
+			sessionID: sessionID,
+			request:   req,
+			response:  &response,
 		}, nil
 	}
 
-	promptResult, err := o.answerer.Generate(ctx, PromptRequest{
-		UserID:     req.UserID,
-		SessionID:  sessionID,
-		Message:    req.Message,
-		History:    history.Combined,
-		Citations:  retrievalResult.Citations,
-		Candidates: retrievalResult.Chunks,
-	})
-	if err != nil {
-		return QueryResponse{}, err
-	}
+	return preparedQuery{
+		sessionID: sessionID,
+		request:   req,
+		prompt: PromptRequest{
+			UserID:     req.UserID,
+			SessionID:  sessionID,
+			Message:    req.Message,
+			History:    history.Combined,
+			Citations:  retrievalResult.Citations,
+			Candidates: retrievalResult.Chunks,
+		},
+		citations:     retrievalResult.Citations,
+		toolTraces:    []tools.Trace{trace},
+		retrievalMeta: retrievalResult.Meta,
+	}, nil
+}
 
-	if err := o.persistRound(ctx, sessionID, req.Message, promptResult.Answer, nil, nil); err != nil {
+func (o *Orchestrator) finalizeQuery(ctx context.Context, result preparedQuery, answer string) (QueryResponse, error) {
+	if err := o.persistRound(ctx, result.sessionID, result.request.Message, answer, nil, nil); err != nil {
 		return QueryResponse{}, err
 	}
 
 	_, _ = o.memory.Update(ctx, memory.UpdateRequest{
-		UserID:    req.UserID,
-		SessionID: sessionID,
+		UserID:    result.request.UserID,
+		SessionID: result.sessionID,
 		Incoming: []memory.MessageMemory{
-			{Role: "user", Content: req.Message},
-			{Role: "assistant", Content: promptResult.Answer},
+			{Role: "user", Content: result.request.Message},
+			{Role: "assistant", Content: answer},
 		},
 	})
 
 	return QueryResponse{
-		SessionID:     sessionID,
-		Answer:        promptResult.Answer,
-		Citations:     retrievalResult.Citations,
-		ToolTraces:    []tools.Trace{trace},
-		RetrievalMeta: retrievalResult.Meta,
+		SessionID:     result.sessionID,
+		Answer:        answer,
+		Citations:     result.citations,
+		ToolTraces:    result.toolTraces,
+		RetrievalMeta: result.retrievalMeta,
 	}, nil
 }
 

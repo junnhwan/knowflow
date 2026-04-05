@@ -12,6 +12,7 @@ import (
 
 type ChatQueryService interface {
 	Query(ctx context.Context, req chatservice.QueryRequest) (chatservice.QueryResponse, error)
+	QueryStream(ctx context.Context, req chatservice.QueryRequest, onDelta func(string) error) (chatservice.QueryResponse, error)
 }
 
 type ConversationReader interface {
@@ -58,21 +59,32 @@ func (h *ChatHandler) QueryStream(c *gin.Context) {
 	}
 	request.UserID = c.GetString("user_id")
 
-	response, err := h.queryService.Query(c.Request.Context(), request)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
 
-	for _, chunk := range chunkAnswer(response.Answer, 24) {
-		c.SSEvent("delta", gin.H{"content": chunk})
+	streamStarted := false
+	response, err := h.queryService.QueryStream(c.Request.Context(), request, func(delta string) error {
+		streamStarted = true
+		c.SSEvent("delta", gin.H{"content": delta})
 		c.Writer.Flush()
+		return nil
+	})
+	if err != nil {
+		if !streamStarted {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.SSEvent("error", gin.H{"error": err.Error()})
+		c.Writer.Flush()
+		return
+	}
+	if response.SessionID != "" {
+		c.Set("session_id", response.SessionID)
 	}
 	c.SSEvent("done", response)
+	c.Writer.Flush()
 }
 
 func (h *ChatHandler) ListSessions(c *gin.Context) {
@@ -91,21 +103,4 @@ func (h *ChatHandler) ListMessages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, messages)
-}
-
-func chunkAnswer(answer string, size int) []string {
-	runes := []rune(answer)
-	if size <= 0 || len(runes) <= size {
-		return []string{answer}
-	}
-
-	chunks := make([]string, 0, (len(runes)/size)+1)
-	for start := 0; start < len(runes); start += size {
-		end := start + size
-		if end > len(runes) {
-			end = len(runes)
-		}
-		chunks = append(chunks, string(runes[start:end]))
-	}
-	return chunks
 }
