@@ -1,0 +1,7 @@
+/harness
+/bin
+/.env
+/.idea
+/.vscode
+*.out
+coverage.txt
