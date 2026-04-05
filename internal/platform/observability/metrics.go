@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -85,6 +86,14 @@ func (m *Metrics) RecordToolCall(toolName string, success bool) {
 	if !success {
 		m.toolCallFailures.WithLabelValues(toolName).Inc()
 	}
+}
+
+func (m *Metrics) RecordLLMRequest(provider string) {
+	m.llmRequests.WithLabelValues(provider).Inc()
+}
+
+func (m *Metrics) RecordLLMLatency(provider string, duration time.Duration) {
+	m.llmLatency.WithLabelValues(provider).Observe(duration.Seconds())
 }
 
 func (m *Metrics) Handler() http.Handler {

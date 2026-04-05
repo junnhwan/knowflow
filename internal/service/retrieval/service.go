@@ -33,9 +33,10 @@ type Result struct {
 }
 
 type RetrieveRequest struct {
-	UserID string
-	Query  string
-	TopK   int
+	UserID    string
+	SessionID string
+	Query     string
+	TopK      int
 }
 
 type Config struct {
@@ -51,6 +52,13 @@ type Service struct {
 	keywordRetriever KeywordRetriever
 	reranker         llm.Reranker
 	config           Config
+	telemetry        Telemetry
+}
+
+type Telemetry interface {
+	RecordRAGHit(userID, sessionID string)
+	RecordRAGMiss(userID, sessionID string)
+	RecordRerankFallback(reason string)
 }
 
 func NewService(embedder llm.Embedder, store SearchStore, reranker llm.Reranker, cfg Config) *Service {
@@ -76,6 +84,10 @@ func NewService(embedder llm.Embedder, store SearchStore, reranker llm.Reranker,
 	}
 }
 
+func (s *Service) SetTelemetry(telemetry Telemetry) {
+	s.telemetry = telemetry
+}
+
 func (s *Service) Retrieve(ctx context.Context, req RetrieveRequest) (Result, error) {
 	if req.Query == "" {
 		return Result{}, errors.New("query is required")
@@ -98,12 +110,21 @@ func (s *Service) Retrieve(ctx context.Context, req RetrieveRequest) (Result, er
 		KeywordCandidates: len(keywordCandidates),
 	}
 	if len(fused) == 0 {
+		if s.telemetry != nil {
+			s.telemetry.RecordRAGMiss(req.UserID, req.SessionID)
+		}
 		return Result{Meta: meta}, nil
 	}
 
 	reranked, fallback, _ := ApplyRerank(ctx, s.reranker, processed.Normalized, fused, limitValue(req.TopK, s.config.FinalTopK))
 	meta.Fallback = fallback
 	meta.FinalCandidates = len(reranked)
+	if s.telemetry != nil {
+		s.telemetry.RecordRAGHit(req.UserID, req.SessionID)
+		if fallback {
+			s.telemetry.RecordRerankFallback("rerank_error")
+		}
+	}
 
 	return Result{
 		Chunks:    reranked,

@@ -37,6 +37,11 @@ type ServiceConfig struct {
 type Registry struct {
 	config ServiceConfig
 	tools  map[string]Tool
+	observer ToolObserver
+}
+
+type ToolObserver interface {
+	RecordToolCall(toolName string, success bool)
 }
 
 func NewRegistry(cfg ServiceConfig) *Registry {
@@ -47,6 +52,10 @@ func NewRegistry(cfg ServiceConfig) *Registry {
 		config: cfg,
 		tools:  map[string]Tool{},
 	}
+}
+
+func (r *Registry) SetObserver(observer ToolObserver) {
+	r.observer = observer
 }
 
 func (r *Registry) Register(name string, tool Tool) error {
@@ -63,10 +72,17 @@ func (r *Registry) Register(name string, tool Tool) error {
 func (r *Registry) Execute(ctx context.Context, name string, input map[string]any) (Output, error) {
 	tool, ok := r.tools[name]
 	if !ok {
+		if r.observer != nil {
+			r.observer.RecordToolCall(name, false)
+		}
 		return Output{Status: "error", Error: "tool not found"}, fmt.Errorf("tool not found: %s", name)
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
-	return tool.Execute(timeoutCtx, input)
+	result, err := tool.Execute(timeoutCtx, input)
+	if r.observer != nil {
+		r.observer.RecordToolCall(name, err == nil)
+	}
+	return result, err
 }
