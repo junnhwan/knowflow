@@ -1,7 +1,7 @@
-/context
-/AGENTS.md
-/MEMORY.md
-/docs
+context
+AGENTS.md
+MEMORY.md
+docs
 /harness
 /bin
 /.env
