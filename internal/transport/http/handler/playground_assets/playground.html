@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KnowFlow Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,600;6..72,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/playground/assets/playground.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="control-panel">
+      <section class="brand-card paper-card">
+        <p class="eyebrow">Knowledge Operations Console</p>
+        <h1>KnowFlow Playground</h1>
+        <p class="lead">左边操控链路，右边观察回答、引用与调试信息，适合本地联调，也能作为后续演示页底座。</p>
+        <div class="brand-tags">
+          <span>Go</span>
+          <span>RAG</span>
+          <span>Redis Memory</span>
+          <span>SSE</span>
+        </div>
+      </section>
+
+      <section class="panel-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Connection</p>
+            <h2>连接与上下文</h2>
+          </div>
+          <button id="syncContextButton" class="ghost-button" type="button">同步</button>
+        </div>
+        <label class="field">
+          <span>Base URL</span>
+          <input id="baseUrlInput" type="text" placeholder="http://localhost:8080">
+        </label>
+        <div class="field-grid">
+          <label class="field">
+            <span>User ID</span>
+            <input id="userIdInput" type="text" placeholder="demo-user">
+          </label>
+          <label class="field">
+            <span>Session ID</span>
+            <input id="sessionIdInput" type="text" placeholder="session-*">
+          </label>
+        </div>
+        <label class="field">
+          <span>Document ID</span>
+          <input id="documentIdInput" type="text" placeholder="doc-*">
+        </label>
+        <div class="button-row">
+          <button id="healthButton" class="primary-button" type="button">健康检查</button>
+          <button id="metricsButton" class="secondary-button" type="button">查看指标</button>
+        </div>
+        <div id="connectionBadge" class="status-banner neutral">等待联调</div>
+      </section>
+
+      <section class="panel-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Ingestion</p>
+            <h2>文档摄取</h2>
+          </div>
+        </div>
+        <label class="field">
+          <span>Source Name</span>
+          <input id="sourceNameInput" type="text" value="backend-interview-notes.md">
+        </label>
+        <label class="field">
+          <span>Raw Content</span>
+          <textarea id="documentContentInput" rows="9" placeholder="贴入一段后端面试知识文本，或者直接选择文件上传。"></textarea>
+        </label>
+        <label class="field">
+          <span>File Upload</span>
+          <input id="documentFileInput" type="file" accept=".md,.txt,text/plain">
+        </label>
+        <div class="button-row">
+          <button id="uploadTextButton" class="primary-button" type="button">上传文本</button>
+          <button id="uploadFileButton" class="secondary-button" type="button">上传文件</button>
+        </div>
+        <div id="documentSummary" class="mini-console">尚未上传文档。</div>
+      </section>
+
+      <section class="panel-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Knowledge</p>
+            <h2>知识操作</h2>
+          </div>
+        </div>
+        <label class="field">
+          <span>Knowledge Content</span>
+          <textarea id="knowledgeContentInput" rows="5" placeholder="把值得沉淀的问答、项目复盘结论或八股总结反写成 knowledge_entry。"></textarea>
+        </label>
+        <div class="field-grid">
+          <label class="field">
+            <span>Source Type</span>
+            <input id="knowledgeSourceTypeInput" type="text" value="manual">
+          </label>
+          <label class="field">
+            <span>关联 Session</span>
+            <input id="knowledgeSessionInput" type="text" placeholder="默认沿用当前 session">
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="upsertKnowledgeButton" class="primary-button" type="button">知识反写</button>
+          <button id="reindexButton" class="secondary-button" type="button">重建索引</button>
+        </div>
+        <div id="knowledgeSummary" class="mini-console">等待知识操作。</div>
+      </section>
+
+      <section class="panel-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Sessions</p>
+            <h2>会话导航</h2>
+          </div>
+          <button id="refreshSessionsButton" class="ghost-button" type="button">刷新</button>
+        </div>
+        <div id="sessionList" class="session-list empty-state">暂无会话。</div>
+      </section>
+
+      <section class="panel-card compact-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Activity</p>
+            <h2>最近动作</h2>
+          </div>
+        </div>
+        <div id="activityFeed" class="activity-feed"></div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <section class="hero-panel">
+        <div>
+          <p class="eyebrow">Interview Knowledge Workbench</p>
+          <h2>把检索、记忆、知识反写和观测放在同一个视图里</h2>
+        </div>
+        <div class="hero-metrics">
+          <div class="metric-pill">
+            <span class="metric-label">Current Session</span>
+            <strong id="sessionLabel">未建立</strong>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-label">Current Document</span>
+            <strong id="documentLabel">未上传</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="composer-card paper-card">
+        <div class="section-head wide-head">
+          <div>
+            <p class="section-kicker">Ask</p>
+            <h2>提问与链路调试</h2>
+          </div>
+          <div class="button-row">
+            <button id="queryButton" class="primary-button" type="button">普通问答</button>
+            <button id="streamButton" class="secondary-button" type="button">SSE 问答</button>
+            <button id="clearTimelineButton" class="ghost-button" type="button">清空面板</button>
+          </div>
+        </div>
+        <label class="field">
+          <span>Question</span>
+          <textarea id="questionInput" rows="4" placeholder="例如：请结合索引热更新和 Redis 会话记忆，讲一下这个项目在后端面试里的亮点。"></textarea>
+        </label>
+        <div class="chip-row">
+          <button class="chip" data-prompt="解释一下 KnowFlow 的混合检索链路，尤其是 PgVector、pg_trgm、RRF 和 Rerank 的关系。">混合检索</button>
+          <button class="chip" data-prompt="Redis 双层记忆为什么需要最近窗口和历史摘要两层结构？">Redis 记忆</button>
+          <button class="chip" data-prompt="如果 Rerank 失败，KnowFlow 会如何降级，为什么这样设计？">Rerank 降级</button>
+          <button class="chip" data-prompt="知识反写和索引热更新是如何闭环的？">知识反写</button>
+        </div>
+      </section>
+
+      <section class="workspace-grid">
+        <section class="timeline-card">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Timeline</p>
+              <h2>消息流</h2>
+            </div>
+          </div>
+          <div id="messageTimeline" class="message-timeline empty-state">还没有消息，先上传一份面试资料再提问吧。</div>
+        </section>
+
+        <section class="side-stack">
+          <section class="citation-card paper-card">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Evidence</p>
+                <h2>引用与证据</h2>
+              </div>
+            </div>
+            <div id="citationList" class="citation-list empty-state">引用会显示在这里。</div>
+          </section>
+
+          <section class="debug-card">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Debug</p>
+                <h2>调试抽屉</h2>
+              </div>
+            </div>
+            <div class="debug-tabs">
+              <button class="debug-tab active" data-tab="raw" type="button">raw_response</button>
+              <button class="debug-tab" data-tab="retrieval" type="button">retrieval_meta</button>
+              <button class="debug-tab" data-tab="tools" type="button">tool_traces</button>
+              <button class="debug-tab" data-tab="metrics" type="button">metrics</button>
+            </div>
+            <pre id="debugOutput" class="debug-output">等待请求...</pre>
+          </section>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="/playground/assets/playground.js"></script>
+</body>
+</html>

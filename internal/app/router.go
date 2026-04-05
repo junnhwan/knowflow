@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"knowflow/internal/transport/http/handler"
 	"knowflow/internal/transport/http/middleware"
 )
 
@@ -26,7 +27,13 @@ func NewRouter(app *App) *gin.Engine {
 		if app.Metrics != nil {
 			router.GET("/metrics", gin.WrapH(app.Metrics.Handler()))
 		}
+	}
 
+	playground := handler.NewPlaygroundHandler()
+	router.GET("/playground", playground.Page)
+	router.StaticFS("/playground/assets", playground.AssetsFS())
+
+	if app != nil {
 		api := router.Group("/api")
 		{
 			if app.DocumentHandler != nil {
