@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const schemaEmbeddingDimension = 64
+
 type Config struct {
 	HTTP          HTTPConfig
 	Postgres      PostgresConfig
@@ -83,7 +85,7 @@ func Load() (Config, error) {
 			ChatModel:          getEnv("MODEL_CHAT_NAME", "qwen-turbo"),
 			EmbeddingModel:     getEnv("MODEL_EMBEDDING_NAME", "text-embedding-v4"),
 			RerankModel:        getEnv("MODEL_RERANK_NAME", "gpt-rerank"),
-			EmbeddingDimension: getEnvInt("EMBEDDING_DIMENSION", 64),
+			EmbeddingDimension: getEnvInt("EMBEDDING_DIMENSION", schemaEmbeddingDimension),
 		},
 		Retrieval: RetrievalConfig{
 			VectorTopK:  getEnvInt("RETRIEVAL_VECTOR_TOP_K", 8),
@@ -122,6 +124,9 @@ func (c Config) Validate() error {
 	}
 	if c.Model.EmbeddingDimension <= 0 {
 		return fmt.Errorf("embedding dimension must be positive")
+	}
+	if c.Model.EmbeddingDimension != schemaEmbeddingDimension {
+		return fmt.Errorf("embedding dimension must be %d to match pgvector schema", schemaEmbeddingDimension)
 	}
 	if c.Memory.TTLSeconds <= 0 {
 		return fmt.Errorf("memory ttl must be positive")

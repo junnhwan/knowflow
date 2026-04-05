@@ -85,3 +85,12 @@ func TestLoadConfigProcessEnvOverridesDotEnv(t *testing.T) {
 		t.Fatalf("unexpected postgres dsn: %s", cfg.Postgres.DSN)
 	}
 }
+
+func TestLoadConfigRejectsUnsupportedEmbeddingDimension(t *testing.T) {
+	t.Setenv("EMBEDDING_DIMENSION", "128")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected embedding dimension validation error")
+	}
+}
