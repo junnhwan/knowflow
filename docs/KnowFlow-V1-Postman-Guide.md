@@ -49,3 +49,11 @@ curl -N -X POST "http://localhost:8080/api/chat/query/stream" ^
 - `02-上传文档-原始文本` 会自动保存 `DocumentID` 到 `document_id`
 - `04-普通问答` 会自动保存 `session_id`
 - `03-上传文档-文件模式` 需要你在 Postman 里手动选择本地文件
+
+## curl 脚本
+
+- PowerShell 全流程脚本: [knowflow-smoke.ps1](D:/dev/my_proj/knowflow/scripts/curl/knowflow-smoke.ps1)
+- PowerShell SSE 脚本: [knowflow-stream.ps1](D:/dev/my_proj/knowflow/scripts/curl/knowflow-stream.ps1)
+- bash 全流程脚本: [knowflow-smoke.sh](D:/dev/my_proj/knowflow/scripts/curl/knowflow-smoke.sh)
+- bash SSE 脚本: [knowflow-stream.sh](D:/dev/my_proj/knowflow/scripts/curl/knowflow-stream.sh)
+- 默认测试文档: [backend-interview-notes.md](D:/dev/my_proj/knowflow/scripts/curl/data/backend-interview-notes.md)
