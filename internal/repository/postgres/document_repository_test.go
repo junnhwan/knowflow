@@ -52,3 +52,63 @@ func TestDocumentRepository_CreateDocument(t *testing.T) {
 		t.Fatalf("unexpected source name: %s", saved.SourceName)
 	}
 }
+
+func TestDocumentRepository_UpsertDocumentReturnsPersistedDocumentOnConflict(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool() error = %v", err)
+	}
+	defer mock.Close()
+
+	repo := NewDocumentRepository(mock)
+	now := time.Unix(1700000000, 0)
+	incoming := document.Document{
+		ID:          "doc-new",
+		UserID:      "demo-user",
+		SourceName:  "backend-interview-notes.md",
+		Status:      "indexed",
+		ContentHash: "hash-new",
+		RawContent:  "new content",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	mock.ExpectQuery("INSERT INTO documents").
+		WithArgs(
+			incoming.ID,
+			incoming.UserID,
+			incoming.SourceName,
+			incoming.Status,
+			incoming.ContentHash,
+			incoming.RawContent,
+			pgxmock.AnyArg(),
+			pgxmock.AnyArg(),
+		).
+		WillReturnRows(
+			pgxmock.NewRows([]string{
+				"id", "user_id", "source_name", "status", "content_hash", "raw_content", "created_at", "updated_at",
+			}).AddRow(
+				"doc-existing",
+				incoming.UserID,
+				incoming.SourceName,
+				incoming.Status,
+				incoming.ContentHash,
+				incoming.RawContent,
+				now.Add(-time.Hour),
+				now,
+			),
+		)
+
+	saved, err := repo.UpsertDocument(context.Background(), incoming)
+	if err != nil {
+		t.Fatalf("UpsertDocument() error = %v", err)
+	}
+
+	if saved.ID != "doc-existing" {
+		t.Fatalf("expected persisted document id, got %s", saved.ID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}

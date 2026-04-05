@@ -8,7 +8,6 @@ import (
 	"knowflow/internal/domain/document"
 	pgplatform "knowflow/internal/platform/postgres"
 	"knowflow/internal/service/retrieval"
-
 )
 
 type DocumentRepository struct {
@@ -28,7 +27,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 }
 
 func (r *DocumentRepository) UpsertDocument(ctx context.Context, doc document.Document) (document.Document, error) {
-	_, err := r.db.Exec(ctx, `
+	row := r.db.QueryRow(ctx, `
 INSERT INTO documents (id, user_id, source_name, status, content_hash, raw_content, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (user_id, source_name)
@@ -37,11 +36,23 @@ DO UPDATE SET
   content_hash = EXCLUDED.content_hash,
   raw_content = EXCLUDED.raw_content,
   updated_at = EXCLUDED.updated_at
+RETURNING id, user_id, source_name, status, content_hash, raw_content, created_at, updated_at
 `, doc.ID, doc.UserID, doc.SourceName, doc.Status, doc.ContentHash, doc.RawContent, doc.CreatedAt, doc.UpdatedAt)
-	if err != nil {
+
+	var saved document.Document
+	if err := row.Scan(
+		&saved.ID,
+		&saved.UserID,
+		&saved.SourceName,
+		&saved.Status,
+		&saved.ContentHash,
+		&saved.RawContent,
+		&saved.CreatedAt,
+		&saved.UpdatedAt,
+	); err != nil {
 		return document.Document{}, err
 	}
-	return doc, nil
+	return saved, nil
 }
 
 func (r *DocumentRepository) GetByID(ctx context.Context, documentID string) (document.Document, error) {
