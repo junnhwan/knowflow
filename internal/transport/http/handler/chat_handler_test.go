@@ -11,15 +11,17 @@ import (
 	"github.com/gin-gonic/gin"
 
 	chatdomain "knowflow/internal/domain/chat"
-	"knowflow/internal/service/guardrail"
 	chatservice "knowflow/internal/service/chat"
+	"knowflow/internal/service/guardrail"
 )
 
 func TestChatHandler_QueryRejectsGuardrailMessage(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 
 	service := &fakeStreamQueryService{}
-	handler := NewChatHandler(service, fakeConversationReader{}, guardrail.NewService(guardrail.Config{MaxMessageLength: 2000}))
+	observer := &fakeGuardrailObserver{}
+	logger := &fakeRequestLogger{}
+	handler := NewChatHandler(service, fakeConversationReader{}, guardrail.NewService(guardrail.Config{MaxMessageLength: 2000}), observer, logger)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -40,6 +42,12 @@ func TestChatHandler_QueryRejectsGuardrailMessage(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "error") {
 		t.Fatalf("expected error response, got %s", rec.Body.String())
 	}
+	if observer.endpoint != "/api/chat/query" || observer.reason != "prompt_injection" {
+		t.Fatalf("unexpected guardrail observer state: %#v", observer)
+	}
+	if logger.lastMessage != "guardrail rejected request" {
+		t.Fatalf("expected guardrail warning log, got %s", logger.lastMessage)
+	}
 }
 
 func TestChatHandler_QueryStreamStreamsDeltaAndDoneEvents(t *testing.T) {
@@ -52,7 +60,7 @@ func TestChatHandler_QueryStreamStreamsDeltaAndDoneEvents(t *testing.T) {
 		},
 		deltas: []string{"第一段", "第二段"},
 	}
-	handler := NewChatHandler(service, fakeConversationReader{}, guardrail.NewService(guardrail.Config{MaxMessageLength: 2000}))
+	handler := NewChatHandler(service, fakeConversationReader{}, guardrail.NewService(guardrail.Config{MaxMessageLength: 2000}), nil, nil)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -109,4 +117,24 @@ func (fakeConversationReader) ListSessions(context.Context, string) ([]chatdomai
 
 func (fakeConversationReader) ListMessages(context.Context, string) ([]chatdomain.Message, error) {
 	return nil, nil
+}
+
+type fakeGuardrailObserver struct {
+	endpoint string
+	reason   string
+}
+
+func (f *fakeGuardrailObserver) RecordGuardrailReject(endpoint, reason string) {
+	f.endpoint = endpoint
+	f.reason = reason
+}
+
+type fakeRequestLogger struct {
+	lastMessage string
+	lastArgs    []any
+}
+
+func (f *fakeRequestLogger) Warn(msg string, args ...any) {
+	f.lastMessage = msg
+	f.lastArgs = append([]any(nil), args...)
 }

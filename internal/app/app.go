@@ -140,6 +140,8 @@ func New(cfg config.Config) (*App, error) {
 		reindexer.Config{
 			RetryInterval: 30 * time.Second,
 			BatchSize:     20,
+			Observer:      metrics,
+			Logger:        logger,
 		},
 	)
 	go reindexWorker.Run(backgroundCtx)
@@ -149,7 +151,7 @@ func New(cfg config.Config) (*App, error) {
 		Logger:           logger,
 		Metrics:          metrics,
 		DocumentHandler:  handler.NewDocumentHandler(ingestionService),
-		ChatHandler:      handler.NewChatHandler(orchestrator, chatRepo, guardrailService),
+		ChatHandler:      handler.NewChatHandler(orchestrator, chatRepo, guardrailService, metrics, logger),
 		KnowledgeHandler: handler.NewKnowledgeHandler(registry),
 		postgres:         postgresClient,
 		redis:            redisClient,

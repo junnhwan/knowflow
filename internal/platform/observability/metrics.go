@@ -17,6 +17,8 @@ type Metrics struct {
 	ragHits          *prometheus.CounterVec
 	ragMisses        *prometheus.CounterVec
 	rerankFallbacks  *prometheus.CounterVec
+	guardrailRejects *prometheus.CounterVec
+	reindexTasks     *prometheus.CounterVec
 	toolCalls        *prometheus.CounterVec
 	toolCallFailures *prometheus.CounterVec
 }
@@ -46,6 +48,14 @@ func NewMetrics() *Metrics {
 			Name: "knowflow_rerank_fallback_total",
 			Help: "Total rerank fallbacks",
 		}, []string{"reason"}),
+		guardrailRejects: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "knowflow_guardrail_reject_total",
+			Help: "Total guardrail rejections",
+		}, []string{"endpoint", "reason"}),
+		reindexTasks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "knowflow_reindex_task_total",
+			Help: "Total background reindex tasks",
+		}, []string{"target_type", "result"}),
 		toolCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "knowflow_tool_call_total",
 			Help: "Total tool calls",
@@ -62,6 +72,8 @@ func NewMetrics() *Metrics {
 		metrics.ragHits,
 		metrics.ragMisses,
 		metrics.rerankFallbacks,
+		metrics.guardrailRejects,
+		metrics.reindexTasks,
 		metrics.toolCalls,
 		metrics.toolCallFailures,
 	)
@@ -79,6 +91,14 @@ func (m *Metrics) RecordRAGMiss(userID, sessionID string) {
 
 func (m *Metrics) RecordRerankFallback(reason string) {
 	m.rerankFallbacks.WithLabelValues(strings.ToLower(reason)).Inc()
+}
+
+func (m *Metrics) RecordGuardrailReject(endpoint, reason string) {
+	m.guardrailRejects.WithLabelValues(strings.ToLower(endpoint), strings.ToLower(reason)).Inc()
+}
+
+func (m *Metrics) RecordReindexTask(targetType, result string) {
+	m.reindexTasks.WithLabelValues(strings.ToLower(targetType), strings.ToLower(result)).Inc()
 }
 
 func (m *Metrics) RecordToolCall(toolName string, success bool) {

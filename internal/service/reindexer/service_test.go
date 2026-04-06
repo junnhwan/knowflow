@@ -23,11 +23,15 @@ func TestService_ProcessPendingReindexesDocumentsAndKnowledgeEntries(t *testing.
 	}
 	documentReindexer := &fakeDocumentReindexer{}
 	knowledgeReindexer := &fakeKnowledgeReindexer{}
+	observer := &fakeReindexObserver{}
+	logger := &fakeReindexLogger{}
 
 	svc := NewService(documentSource, knowledgeSource, documentReindexer, knowledgeReindexer, Config{
 		RetryInterval: 30 * time.Second,
 		BatchSize:     10,
 		Now:           func() time.Time { return time.Unix(1700000100, 0) },
+		Observer:      observer,
+		Logger:        logger,
 	})
 
 	if err := svc.ProcessPending(context.Background()); err != nil {
@@ -39,6 +43,12 @@ func TestService_ProcessPendingReindexesDocumentsAndKnowledgeEntries(t *testing.
 	}
 	if len(knowledgeReindexer.entryIDs) != 1 || knowledgeReindexer.entryIDs[0] != "knowledge-1" {
 		t.Fatalf("expected knowledge-1 to be reindexed, got %#v", knowledgeReindexer.entryIDs)
+	}
+	if len(observer.records) != 2 {
+		t.Fatalf("expected observer to record 2 successes, got %#v", observer.records)
+	}
+	if len(logger.infoMessages) != 2 {
+		t.Fatalf("expected 2 info logs, got %#v", logger.infoMessages)
 	}
 }
 
@@ -55,12 +65,16 @@ func TestService_ProcessPendingMarksFailedTargetsAsIndexFailed(t *testing.T) {
 	}
 	documentReindexer := &fakeDocumentReindexer{err: errors.New("embed failed")}
 	knowledgeReindexer := &fakeKnowledgeReindexer{err: errors.New("rerank failed")}
+	observer := &fakeReindexObserver{}
+	logger := &fakeReindexLogger{}
 	now := time.Unix(1700000200, 0)
 
 	svc := NewService(documentSource, knowledgeSource, documentReindexer, knowledgeReindexer, Config{
 		RetryInterval: 30 * time.Second,
 		BatchSize:     10,
 		Now:           func() time.Time { return now },
+		Observer:      observer,
+		Logger:        logger,
 	})
 
 	if err := svc.ProcessPending(context.Background()); err != nil {
@@ -78,6 +92,12 @@ func TestService_ProcessPendingMarksFailedTargetsAsIndexFailed(t *testing.T) {
 	}
 	if knowledgeSource.statusUpdates[0].status != "index_failed" {
 		t.Fatalf("expected knowledge status index_failed, got %s", knowledgeSource.statusUpdates[0].status)
+	}
+	if len(observer.records) != 2 {
+		t.Fatalf("expected observer to record 2 failures, got %#v", observer.records)
+	}
+	if len(logger.warnMessages) != 2 {
+		t.Fatalf("expected 2 warn logs, got %#v", logger.warnMessages)
 	}
 }
 
@@ -147,4 +167,25 @@ type statusUpdate struct {
 	id        string
 	status    string
 	updatedAt time.Time
+}
+
+type fakeReindexObserver struct {
+	records []string
+}
+
+func (f *fakeReindexObserver) RecordReindexTask(targetType, result string) {
+	f.records = append(f.records, targetType+":"+result)
+}
+
+type fakeReindexLogger struct {
+	infoMessages []string
+	warnMessages []string
+}
+
+func (f *fakeReindexLogger) Info(msg string, _ ...any) {
+	f.infoMessages = append(f.infoMessages, msg)
+}
+
+func (f *fakeReindexLogger) Warn(msg string, _ ...any) {
+	f.warnMessages = append(f.warnMessages, msg)
 }

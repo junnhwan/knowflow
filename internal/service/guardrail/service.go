@@ -1,7 +1,7 @@
 package guardrail
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 	"unicode/utf8"
 )
@@ -47,22 +47,46 @@ func NewService(cfg Config) *Service {
 func (s *Service) Validate(message string) error {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
-		return fmt.Errorf("消息不能为空")
+		return violation("blank_message", "消息不能为空")
 	}
 	if utf8.RuneCountInString(trimmed) > s.maxMessageLength {
-		return fmt.Errorf("消息长度超过限制")
+		return violation("message_too_long", "消息长度超过限制")
 	}
 
 	lower := strings.ToLower(trimmed)
 	for _, rule := range s.injectionRules {
 		if strings.Contains(lower, strings.ToLower(rule)) {
-			return fmt.Errorf("消息命中基础安全规则，请调整提问方式")
+			return violation("prompt_injection", "消息命中基础安全规则，请调整提问方式")
 		}
 	}
 	for _, rule := range s.secretRules {
 		if strings.Contains(lower, strings.ToLower(rule)) {
-			return fmt.Errorf("消息涉及敏感信息请求，已拒绝处理")
+			return violation("sensitive_request", "消息涉及敏感信息请求，已拒绝处理")
 		}
 	}
 	return nil
+}
+
+type ViolationError struct {
+	Reason  string
+	Message string
+}
+
+func (e ViolationError) Error() string {
+	return e.Message
+}
+
+func Reason(err error) string {
+	var target ViolationError
+	if errors.As(err, &target) {
+		return target.Reason
+	}
+	return "unknown"
+}
+
+func violation(reason, message string) error {
+	return ViolationError{
+		Reason:  reason,
+		Message: message,
+	}
 }

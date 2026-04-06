@@ -25,13 +25,25 @@ type ChatHandler struct {
 	queryService ChatQueryService
 	reader       ConversationReader
 	guardrail    *guardrail.Service
+	observer     GuardrailObserver
+	logger       RequestLogger
 }
 
-func NewChatHandler(queryService ChatQueryService, reader ConversationReader, guardrailService *guardrail.Service) *ChatHandler {
+type GuardrailObserver interface {
+	RecordGuardrailReject(endpoint, reason string)
+}
+
+type RequestLogger interface {
+	Warn(msg string, args ...any)
+}
+
+func NewChatHandler(queryService ChatQueryService, reader ConversationReader, guardrailService *guardrail.Service, observer GuardrailObserver, logger RequestLogger) *ChatHandler {
 	return &ChatHandler{
 		queryService: queryService,
 		reader:       reader,
 		guardrail:    guardrailService,
+		observer:     observer,
+		logger:       logger,
 	}
 }
 
@@ -43,6 +55,7 @@ func (h *ChatHandler) Query(c *gin.Context) {
 	}
 	if h.guardrail != nil {
 		if err := h.guardrail.Validate(request.Message); err != nil {
+			h.recordGuardrailReject(c, err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -68,6 +81,7 @@ func (h *ChatHandler) QueryStream(c *gin.Context) {
 	}
 	if h.guardrail != nil {
 		if err := h.guardrail.Validate(request.Message); err != nil {
+			h.recordGuardrailReject(c, err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -118,4 +132,20 @@ func (h *ChatHandler) ListMessages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, messages)
+}
+
+func (h *ChatHandler) recordGuardrailReject(c *gin.Context, err error) {
+	reason := guardrail.Reason(err)
+	if h.observer != nil {
+		h.observer.RecordGuardrailReject(c.FullPath(), reason)
+	}
+	if h.logger != nil {
+		h.logger.Warn("guardrail rejected request",
+			"path", c.FullPath(),
+			"request_id", c.GetString("request_id"),
+			"user_id", c.GetString("user_id"),
+			"session_id", c.GetString("session_id"),
+			"reason", reason,
+		)
+	}
 }

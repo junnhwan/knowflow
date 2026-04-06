@@ -30,6 +30,17 @@ type Config struct {
 	RetryInterval time.Duration
 	BatchSize     int
 	Now           func() time.Time
+	Observer      Observer
+	Logger        Logger
+}
+
+type Observer interface {
+	RecordReindexTask(targetType, result string)
+}
+
+type Logger interface {
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
 }
 
 type Service struct {
@@ -85,7 +96,27 @@ func (s *Service) ProcessPending(ctx context.Context) error {
 	}
 	for _, doc := range documents {
 		if _, err := s.docRunner.ReindexDocument(ctx, doc.ID); err != nil {
+			if s.config.Observer != nil {
+				s.config.Observer.RecordReindexTask("document", "failed")
+			}
+			if s.config.Logger != nil {
+				s.config.Logger.Warn("background reindex failed",
+					"target_type", "document",
+					"target_id", doc.ID,
+					"error", err.Error(),
+				)
+			}
 			_ = s.documents.UpdateStatus(ctx, doc.ID, "index_failed", s.config.Now())
+			continue
+		}
+		if s.config.Observer != nil {
+			s.config.Observer.RecordReindexTask("document", "success")
+		}
+		if s.config.Logger != nil {
+			s.config.Logger.Info("background reindex succeeded",
+				"target_type", "document",
+				"target_id", doc.ID,
+			)
 		}
 	}
 
@@ -95,7 +126,27 @@ func (s *Service) ProcessPending(ctx context.Context) error {
 	}
 	for _, entry := range entries {
 		if _, err := s.knRunner.ReindexKnowledgeEntry(ctx, entry.ID); err != nil {
+			if s.config.Observer != nil {
+				s.config.Observer.RecordReindexTask("knowledge_entry", "failed")
+			}
+			if s.config.Logger != nil {
+				s.config.Logger.Warn("background reindex failed",
+					"target_type", "knowledge_entry",
+					"target_id", entry.ID,
+					"error", err.Error(),
+				)
+			}
 			_ = s.knowledge.UpdateStatus(ctx, entry.ID, "index_failed", s.config.Now())
+			continue
+		}
+		if s.config.Observer != nil {
+			s.config.Observer.RecordReindexTask("knowledge_entry", "success")
+		}
+		if s.config.Logger != nil {
+			s.config.Logger.Info("background reindex succeeded",
+				"target_type", "knowledge_entry",
+				"target_id", entry.ID,
+			)
 		}
 	}
 
