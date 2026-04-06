@@ -94,3 +94,35 @@ func TestLoadConfigRejectsUnsupportedEmbeddingDimension(t *testing.T) {
 		t.Fatal("expected embedding dimension validation error")
 	}
 }
+
+func TestLoadConfigIncludesRemoteEmbeddingAndRerankOverrides(t *testing.T) {
+	t.Setenv("MODEL_PROVIDER", "dashscope")
+	t.Setenv("MODEL_BASE_URL", "https://example.com/compatible-mode/v1")
+	t.Setenv("MODEL_API_KEY", "chat-key")
+	t.Setenv("MODEL_EMBEDDING_BASE_URL", "https://example.com/embedding")
+	t.Setenv("MODEL_EMBEDDING_API_KEY", "embedding-key")
+	t.Setenv("MODEL_RERANK_URL", "https://example.com/reranks")
+	t.Setenv("MODEL_RERANK_API_KEY", "rerank-key")
+	t.Setenv("MODEL_RERANK_INSTRUCTION", "根据查询优先返回最相关片段")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Model.EmbeddingBaseURL != "https://example.com/embedding" {
+		t.Fatalf("unexpected embedding base url: %s", cfg.Model.EmbeddingBaseURL)
+	}
+	if cfg.Model.EmbeddingAPIKey != "embedding-key" {
+		t.Fatalf("unexpected embedding api key: %s", cfg.Model.EmbeddingAPIKey)
+	}
+	if cfg.Model.RerankURL != "https://example.com/reranks" {
+		t.Fatalf("unexpected rerank url: %s", cfg.Model.RerankURL)
+	}
+	if cfg.Model.RerankAPIKey != "rerank-key" {
+		t.Fatalf("unexpected rerank api key: %s", cfg.Model.RerankAPIKey)
+	}
+	if cfg.Model.RerankInstruction != "根据查询优先返回最相关片段" {
+		t.Fatalf("unexpected rerank instruction: %s", cfg.Model.RerankInstruction)
+	}
+}

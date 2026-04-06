@@ -63,8 +63,8 @@ func New(cfg config.Config) (*App, error) {
 	knowledgeRepo := pgrepo.NewKnowledgeRepository(postgresClient.Pool)
 	memoryStore := redisrepo.NewMemoryStore(redisClient.Raw)
 
-	embedder := llm.LocalHasherEmbedder{Dimension: cfg.Model.EmbeddingDimension}
-	reranker := llm.LocalOverlapReranker{}
+	embedder := buildEmbedder(cfg)
+	reranker := buildReranker(cfg)
 
 	ingestionService := ingestion.NewService(documentRepo, embedder, ingestion.ServiceConfig{
 		ChunkSize:    700,
@@ -142,6 +142,38 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	return app, nil
+}
+
+func buildEmbedder(cfg config.Config) llm.Embedder {
+	local := llm.LocalHasherEmbedder{Dimension: cfg.Model.EmbeddingDimension}
+	if cfg.Model.Provider == "local" || cfg.Model.EmbeddingAPIKey == "" {
+		return local
+	}
+	return llm.FallbackEmbedder{
+		Primary: llm.OpenAICompatibleEmbedder{
+			BaseURL:    cfg.Model.EmbeddingBaseURL,
+			APIKey:     cfg.Model.EmbeddingAPIKey,
+			Model:      cfg.Model.EmbeddingModel,
+			Dimensions: cfg.Model.EmbeddingDimension,
+		},
+		Fallback: local,
+	}
+}
+
+func buildReranker(cfg config.Config) llm.Reranker {
+	local := llm.LocalOverlapReranker{}
+	if cfg.Model.Provider == "local" || cfg.Model.RerankAPIKey == "" {
+		return local
+	}
+	return llm.FallbackReranker{
+		Primary: llm.DashScopeReranker{
+			URL:         cfg.Model.RerankURL,
+			APIKey:      cfg.Model.RerankAPIKey,
+			Model:       cfg.Model.RerankModel,
+			Instruction: cfg.Model.RerankInstruction,
+		},
+		Fallback: local,
+	}
 }
 
 func buildAnswerer(ctx context.Context, cfg config.Config) (chatservice.Answerer, string, error) {

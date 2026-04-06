@@ -39,8 +39,13 @@ type ModelConfig struct {
 	BaseURL            string
 	APIKey             string
 	ChatModel          string
+	EmbeddingBaseURL   string
+	EmbeddingAPIKey    string
 	EmbeddingModel     string
+	RerankURL          string
+	RerankAPIKey       string
 	RerankModel        string
+	RerankInstruction  string
 	EmbeddingDimension int
 }
 
@@ -83,8 +88,13 @@ func Load() (Config, error) {
 			BaseURL:            getEnv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
 			APIKey:             firstNonEmpty(os.Getenv("MODEL_API_KEY"), os.Getenv("DASHSCOPE_API_KEY")),
 			ChatModel:          getEnv("MODEL_CHAT_NAME", "qwen-turbo"),
+			EmbeddingBaseURL:   firstNonEmpty(os.Getenv("MODEL_EMBEDDING_BASE_URL"), getEnv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")),
+			EmbeddingAPIKey:    firstNonEmpty(os.Getenv("MODEL_EMBEDDING_API_KEY"), os.Getenv("MODEL_API_KEY"), os.Getenv("DASHSCOPE_API_KEY")),
 			EmbeddingModel:     getEnv("MODEL_EMBEDDING_NAME", "text-embedding-v4"),
+			RerankURL:          getEnv("MODEL_RERANK_URL", "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"),
+			RerankAPIKey:       firstNonEmpty(os.Getenv("MODEL_RERANK_API_KEY"), os.Getenv("MODEL_API_KEY"), os.Getenv("DASHSCOPE_API_KEY")),
 			RerankModel:        getEnv("MODEL_RERANK_NAME", "gpt-rerank"),
+			RerankInstruction:  getEnv("MODEL_RERANK_INSTRUCTION", ""),
 			EmbeddingDimension: getEnvInt("EMBEDDING_DIMENSION", schemaEmbeddingDimension),
 		},
 		Retrieval: RetrievalConfig{
