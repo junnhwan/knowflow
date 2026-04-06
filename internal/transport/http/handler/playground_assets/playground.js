@@ -5,6 +5,7 @@ const state = {
   userId: "demo-user",
   sessionId: "",
   documentId: "",
+  knowledgeEntryId: "",
   debugTab: "raw",
   sessions: [],
   messages: [],
@@ -22,6 +23,7 @@ const refs = {
   userIdInput: document.getElementById("userIdInput"),
   sessionIdInput: document.getElementById("sessionIdInput"),
   documentIdInput: document.getElementById("documentIdInput"),
+  knowledgeEntryIdInput: document.getElementById("knowledgeEntryIdInput"),
   sourceNameInput: document.getElementById("sourceNameInput"),
   documentContentInput: document.getElementById("documentContentInput"),
   documentFileInput: document.getElementById("documentFileInput"),
@@ -64,6 +66,7 @@ function hydrateFromStorage() {
     state.userId = saved.userId || state.userId;
     state.sessionId = saved.sessionId || "";
     state.documentId = saved.documentId || "";
+    state.knowledgeEntryId = saved.knowledgeEntryId || "";
   } catch (error) {
     console.warn("failed to parse playground state", error);
   }
@@ -77,6 +80,7 @@ function persistStorage() {
       userId: state.userId,
       sessionId: state.sessionId,
       documentId: state.documentId,
+      knowledgeEntryId: state.knowledgeEntryId,
     }),
   );
 }
@@ -86,6 +90,7 @@ function seedInputs() {
   refs.userIdInput.value = state.userId;
   refs.sessionIdInput.value = state.sessionId;
   refs.documentIdInput.value = state.documentId;
+  refs.knowledgeEntryIdInput.value = state.knowledgeEntryId;
   refs.knowledgeSessionInput.value = state.sessionId;
   refs.documentContentInput.value =
     refs.documentContentInput.value ||
@@ -139,6 +144,7 @@ function syncContextFromInputs() {
   state.userId = (refs.userIdInput.value || "demo-user").trim();
   state.sessionId = refs.sessionIdInput.value.trim();
   state.documentId = refs.documentIdInput.value.trim();
+  state.knowledgeEntryId = refs.knowledgeEntryIdInput.value.trim();
   refs.knowledgeSessionInput.value = refs.knowledgeSessionInput.value.trim() || state.sessionId;
   persistStorage();
   updateContextLabels();
@@ -270,9 +276,15 @@ async function onUpsertKnowledge() {
     });
     const data = await parseJsonResponse(response);
     state.lastRaw = data;
+    const knowledgeEntryId = data.result?.data?.id || data.data?.id || data.id || "";
+    if (knowledgeEntryId) {
+      state.knowledgeEntryId = knowledgeEntryId;
+      refs.knowledgeEntryIdInput.value = knowledgeEntryId;
+      persistStorage();
+    }
     refs.knowledgeSummary.textContent = safePretty(data);
     renderDebug();
-    pushActivity("知识条目已写入。", "success");
+    pushActivity(`知识条目已写入，knowledge_entry_id=${knowledgeEntryId || "未知"}`, "success");
   } catch (error) {
     handleError("知识反写失败", error);
   }
@@ -280,24 +292,28 @@ async function onUpsertKnowledge() {
 
 async function onReindexDocument() {
   syncContextFromInputs();
-  if (!state.documentId) {
-    handleError("重建索引失败", new Error("当前 document_id 为空"));
+  if (!state.documentId && !state.knowledgeEntryId) {
+    handleError("重建索引失败", new Error("当前 document_id 和 knowledge_entry_id 都为空"));
     return;
   }
 
   try {
+    const payload = state.knowledgeEntryId
+      ? { knowledge_entry_id: state.knowledgeEntryId }
+      : { document_id: state.documentId };
     const response = await fetch(resolveUrl("/api/kb/reindex"), {
       method: "POST",
       headers: jsonHeaders(),
-      body: JSON.stringify({
-        document_id: state.documentId,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await parseJsonResponse(response);
     state.lastRaw = data;
     refs.knowledgeSummary.textContent = safePretty(data);
     renderDebug();
-    pushActivity(`索引已重建，document_id=${state.documentId}`, "warn");
+    const label = state.knowledgeEntryId
+      ? `knowledge_entry_id=${state.knowledgeEntryId}`
+      : `document_id=${state.documentId}`;
+    pushActivity(`索引已重建，${label}`, "warn");
   } catch (error) {
     handleError("重建索引失败", error);
   }
@@ -535,6 +551,8 @@ function normalizeCitation(item) {
     chunkId: item.chunk_id || item.ChunkID || "",
     snippet: item.snippet || item.Snippet || "",
     documentId: item.document_id || item.DocumentID || "",
+    knowledgeEntryId: item.knowledge_entry_id || item.KnowledgeEntryID || "",
+    sourceKind: item.source_kind || item.SourceKind || "",
   };
 }
 
@@ -603,7 +621,7 @@ function renderCitations() {
         <article class="citation-item">
           <strong>${escapeHtml(citation.sourceName)}</strong>
           <p>${escapeHtml(citation.snippet)}</p>
-          <code>${escapeHtml(citation.chunkId || citation.documentId)}</code>
+          <code>${escapeHtml(citation.chunkId || citation.documentId || citation.knowledgeEntryId)}</code>
         </article>
       `;
     })

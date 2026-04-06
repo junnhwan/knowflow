@@ -8,14 +8,16 @@ import (
 )
 
 type Candidate struct {
-	ChunkID      string  `json:"chunk_id"`
-	DocumentID   string  `json:"document_id"`
-	SourceName   string  `json:"source_name"`
-	Content      string  `json:"content"`
-	VectorScore  float64 `json:"vector_score"`
-	KeywordScore float64 `json:"keyword_score"`
-	FusionScore  float64 `json:"fusion_score"`
-	FinalScore   float64 `json:"final_score"`
+	ChunkID          string  `json:"chunk_id"`
+	DocumentID       string  `json:"document_id"`
+	KnowledgeEntryID string  `json:"knowledge_entry_id,omitempty"`
+	SourceName       string  `json:"source_name"`
+	SourceKind       string  `json:"source_kind,omitempty"`
+	Content          string  `json:"content"`
+	VectorScore      float64 `json:"vector_score"`
+	KeywordScore     float64 `json:"keyword_score"`
+	FusionScore      float64 `json:"fusion_score"`
+	FinalScore       float64 `json:"final_score"`
 }
 
 type Metadata struct {

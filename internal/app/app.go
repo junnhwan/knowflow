@@ -17,6 +17,7 @@ import (
 	redisrepo "knowflow/internal/repository/redis"
 	chatservice "knowflow/internal/service/chat"
 	"knowflow/internal/service/ingestion"
+	knowledgeservice "knowflow/internal/service/knowledge"
 	"knowflow/internal/service/memory"
 	"knowflow/internal/service/retrieval"
 	"knowflow/internal/service/tools"
@@ -69,7 +70,12 @@ func New(cfg config.Config) (*App, error) {
 		ChunkSize:    700,
 		ChunkOverlap: 150,
 	})
-	retrievalService := retrieval.NewService(embedder, documentRepo, reranker, retrieval.Config{
+	knowledgeIndexService := knowledgeservice.NewService(knowledgeRepo, knowledgeRepo, embedder, knowledgeservice.Config{
+		ChunkSize:    700,
+		ChunkOverlap: 150,
+	})
+	searchRepo := pgrepo.NewHybridSearchRepository(documentRepo, knowledgeRepo)
+	retrievalService := retrieval.NewService(embedder, searchRepo, reranker, retrieval.Config{
 		VectorTopK:  cfg.Retrieval.VectorTopK,
 		KeywordTopK: cfg.Retrieval.KeywordTopK,
 		FinalTopK:   cfg.Retrieval.FinalTopK,
@@ -93,12 +99,14 @@ func New(cfg config.Config) (*App, error) {
 	if err := registry.Register("retrieve_knowledge", tools.NewRetrieveKnowledgeTool(retrievalService)); err != nil {
 		return nil, err
 	}
-	if err := registry.Register("upsert_knowledge", tools.NewUpsertKnowledgeTool(knowledgeRepo, time.Now, nil)); err != nil {
+	if err := registry.Register("upsert_knowledge", tools.NewUpsertKnowledgeTool(knowledgeRepo, knowledgeIndexService, time.Now, nil)); err != nil {
 		return nil, err
 	}
 	if err := registry.Register("refresh_document_index", tools.NewRefreshDocumentIndexTool(documentReindexer{
 		documents: documentRepo,
 		ingestion: ingestionService,
+	}, knowledgeReindexer{
+		knowledge: knowledgeIndexService,
 	})); err != nil {
 		return nil, err
 	}
@@ -169,7 +177,7 @@ type documentReindexer struct {
 	ingestion *ingestion.Service
 }
 
-func (r documentReindexer) Reindex(ctx context.Context, documentID string) (map[string]any, error) {
+func (r documentReindexer) ReindexDocument(ctx context.Context, documentID string) (map[string]any, error) {
 	doc, err := r.documents.GetByID(ctx, documentID)
 	if err != nil {
 		return nil, err
@@ -183,8 +191,26 @@ func (r documentReindexer) Reindex(ctx context.Context, documentID string) (map[
 		return nil, err
 	}
 	return map[string]any{
+		"target_type": "document",
 		"document_id": result.DocumentID,
 		"chunk_count": result.ChunkCount,
 		"status":      result.Status,
+	}, nil
+}
+
+type knowledgeReindexer struct {
+	knowledge *knowledgeservice.Service
+}
+
+func (r knowledgeReindexer) ReindexKnowledgeEntry(ctx context.Context, entryID string) (map[string]any, error) {
+	result, err := r.knowledge.ReindexEntry(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"target_type":        "knowledge_entry",
+		"knowledge_entry_id": result.EntryID,
+		"chunk_count":        result.ChunkCount,
+		"status":             result.Status,
 	}, nil
 }
