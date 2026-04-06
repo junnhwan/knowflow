@@ -38,11 +38,41 @@ func TestIngestionService_IngestMarkdownDocument(t *testing.T) {
 	if result.ChunkCount == 0 {
 		t.Fatalf("expected chunks to be created")
 	}
+
+	if len(store.statusUpdates) == 0 || store.statusUpdates[0] != "indexed" {
+		t.Fatalf("expected indexed status update, got %#v", store.statusUpdates)
+	}
+}
+
+func TestIngestionService_MarksDocumentAsIndexFailedWhenEmbeddingFails(t *testing.T) {
+	store := &fakeDocumentStore{}
+	svc := NewService(store, failingEmbedder{}, ServiceConfig{
+		ChunkSize:    64,
+		ChunkOverlap: 8,
+		Now:          func() time.Time { return time.Unix(1700000000, 0) },
+		NewID: func() string {
+			return "doc-2"
+		},
+	})
+
+	_, err := svc.Ingest(context.Background(), IngestRequest{
+		UserID:     "demo-user",
+		SourceName: "rag.md",
+		Content:    "# Title\n\nKnowFlow keeps citations.",
+	})
+	if err == nil {
+		t.Fatal("expected embed error")
+	}
+
+	if len(store.statusUpdates) == 0 || store.statusUpdates[0] != "index_failed" {
+		t.Fatalf("expected index_failed status update, got %#v", store.statusUpdates)
+	}
 }
 
 type fakeDocumentStore struct {
-	document document.Document
-	chunks   []document.Chunk
+	document      document.Document
+	chunks        []document.Chunk
+	statusUpdates []string
 }
 
 func (f *fakeDocumentStore) UpsertDocument(_ context.Context, doc document.Document) (document.Document, error) {
@@ -55,6 +85,11 @@ func (f *fakeDocumentStore) ReplaceChunks(_ context.Context, _ string, chunks []
 	return nil
 }
 
+func (f *fakeDocumentStore) UpdateStatus(_ context.Context, _ string, status string, _ time.Time) error {
+	f.statusUpdates = append(f.statusUpdates, status)
+	return nil
+}
+
 type fakeEmbedder struct{}
 
 func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -63,4 +98,10 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 		out = append(out, []float32{1, 0, 0, 1})
 	}
 	return out, nil
+}
+
+type failingEmbedder struct{}
+
+func (failingEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, context.DeadlineExceeded
 }

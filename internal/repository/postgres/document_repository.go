@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"knowflow/internal/domain/document"
 	pgplatform "knowflow/internal/platform/postgres"
@@ -67,6 +68,40 @@ WHERE id = $1
 		return document.Document{}, err
 	}
 	return doc, nil
+}
+
+func (r *DocumentRepository) UpdateStatus(ctx context.Context, documentID, status string, updatedAt time.Time) error {
+	_, err := r.db.Exec(ctx, `
+UPDATE documents
+SET status = $2, updated_at = $3
+WHERE id = $1
+`, documentID, status, updatedAt)
+	return err
+}
+
+func (r *DocumentRepository) ListPendingForReindex(ctx context.Context, before time.Time, limit int) ([]document.Document, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT id, user_id, source_name, status, content_hash, raw_content, created_at, updated_at
+FROM documents
+WHERE status IN ('pending_index', 'index_failed')
+  AND updated_at <= $1
+ORDER BY updated_at ASC
+LIMIT $2
+`, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var documents []document.Document
+	for rows.Next() {
+		var doc document.Document
+		if err := rows.Scan(&doc.ID, &doc.UserID, &doc.SourceName, &doc.Status, &doc.ContentHash, &doc.RawContent, &doc.CreatedAt, &doc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		documents = append(documents, doc)
+	}
+	return documents, rows.Err()
 }
 
 func (r *DocumentRepository) DeleteByID(ctx context.Context, documentID string) error {

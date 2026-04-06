@@ -20,6 +20,7 @@ import (
 	"knowflow/internal/service/ingestion"
 	knowledgeservice "knowflow/internal/service/knowledge"
 	"knowflow/internal/service/memory"
+	"knowflow/internal/service/reindexer"
 	"knowflow/internal/service/retrieval"
 	"knowflow/internal/service/tools"
 	"knowflow/internal/transport/http/handler"
@@ -36,6 +37,7 @@ type App struct {
 	KnowledgeHandler *handler.KnowledgeHandler
 	postgres         *pgplatform.Client
 	redis            *redisplatform.Client
+	backgroundCancel context.CancelFunc
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -124,6 +126,23 @@ func New(cfg config.Config) (*App, error) {
 		Answerer:  chatservice.NewTelemetryAnswerer(providerLabel, answerer, metrics),
 	})
 	guardrailService := guardrail.NewService(guardrail.Config{MaxMessageLength: 2000})
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	reindexWorker := reindexer.NewService(
+		documentRepo,
+		knowledgeRepo,
+		documentReindexer{
+			documents: documentRepo,
+			ingestion: ingestionService,
+		},
+		knowledgeReindexer{
+			knowledge: knowledgeIndexService,
+		},
+		reindexer.Config{
+			RetryInterval: 30 * time.Second,
+			BatchSize:     20,
+		},
+	)
+	go reindexWorker.Run(backgroundCtx)
 
 	app := &App{
 		Config:           cfg,
@@ -134,6 +153,7 @@ func New(cfg config.Config) (*App, error) {
 		KnowledgeHandler: handler.NewKnowledgeHandler(registry),
 		postgres:         postgresClient,
 		redis:            redisClient,
+		backgroundCancel: backgroundCancel,
 	}
 	router := NewRouter(app)
 	app.Router = router
@@ -197,6 +217,9 @@ func (a *App) Run() error {
 }
 
 func (a *App) Shutdown(ctx context.Context) error {
+	if a.backgroundCancel != nil {
+		a.backgroundCancel()
+	}
 	if a.redis != nil {
 		_ = a.redis.Close()
 	}

@@ -148,3 +148,49 @@ func TestKnowledgeRepository_ReplaceChunksAndSearchKnowledgeChunks(t *testing.T)
 		t.Fatalf("unmet expectations: %v", err)
 	}
 }
+
+func TestKnowledgeRepository_UpdateStatusAndListPendingForReindex(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool() error = %v", err)
+	}
+	defer mock.Close()
+
+	repo := NewKnowledgeRepository(mock)
+	now := time.Unix(1700000000, 0)
+
+	mock.ExpectExec("UPDATE knowledge_entries SET status = \\$2, updated_at = \\$3 WHERE id = \\$1").
+		WithArgs("knowledge-1", "index_failed", now).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	if err := repo.UpdateStatus(context.Background(), "knowledge-1", "index_failed", now); err != nil {
+		t.Fatalf("UpdateStatus() error = %v", err)
+	}
+
+	rows := pgxmock.NewRows([]string{
+		"id", "user_id", "session_id", "source_message_id", "document_id", "source_type", "content", "status", "created_at", "updated_at",
+	}).AddRow(
+		"knowledge-1",
+		"demo-user",
+		"session-1",
+		"msg-1",
+		"doc-1",
+		"qa",
+		"GMP 中 P 负责承载可运行的 G。",
+		"index_failed",
+		now.Add(-time.Hour),
+		now.Add(-time.Minute),
+	)
+
+	mock.ExpectQuery("SELECT id, user_id, session_id, source_message_id, document_id, source_type, content, status, created_at, updated_at FROM knowledge_entries WHERE status IN \\('pending_index', 'index_failed'\\) AND updated_at <= \\$1 ORDER BY updated_at ASC LIMIT \\$2").
+		WithArgs(now, 10).
+		WillReturnRows(rows)
+
+	entries, err := repo.ListPendingForReindex(context.Background(), now, 10)
+	if err != nil {
+		t.Fatalf("ListPendingForReindex() error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "knowledge-1" {
+		t.Fatalf("unexpected entries: %#v", entries)
+	}
+}

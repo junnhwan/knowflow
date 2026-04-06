@@ -59,6 +59,42 @@ WHERE id = $1
 	return err
 }
 
+func (r *KnowledgeRepository) ListPendingForReindex(ctx context.Context, before time.Time, limit int) ([]knowledge.Entry, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT id, user_id, session_id, source_message_id, document_id, source_type, content, status, created_at, updated_at
+FROM knowledge_entries
+WHERE status IN ('pending_index', 'index_failed')
+  AND updated_at <= $1
+ORDER BY updated_at ASC
+LIMIT $2
+`, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []knowledge.Entry
+	for rows.Next() {
+		var entry knowledge.Entry
+		if err := rows.Scan(
+			&entry.ID,
+			&entry.UserID,
+			&entry.SessionID,
+			&entry.SourceMessageID,
+			&entry.DocumentID,
+			&entry.SourceType,
+			&entry.Content,
+			&entry.Status,
+			&entry.CreatedAt,
+			&entry.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
+
 func (r *KnowledgeRepository) ReplaceChunks(ctx context.Context, knowledgeEntryID string, chunks []knowledge.Chunk) error {
 	if _, err := r.db.Exec(ctx, `DELETE FROM knowledge_chunks WHERE knowledge_entry_id = $1`, knowledgeEntryID); err != nil {
 		return err

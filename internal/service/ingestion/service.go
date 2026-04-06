@@ -15,6 +15,7 @@ import (
 type DocumentStore interface {
 	UpsertDocument(ctx context.Context, doc document.Document) (document.Document, error)
 	ReplaceChunks(ctx context.Context, documentID string, chunks []document.Chunk) error
+	UpdateStatus(ctx context.Context, documentID, status string, updatedAt time.Time) error
 }
 
 type ServiceConfig struct {
@@ -84,7 +85,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		ID:          docID,
 		UserID:      req.UserID,
 		SourceName:  req.SourceName,
-		Status:      "indexed",
+		Status:      "pending_index",
 		ContentHash: hashContent(normalized),
 		RawContent:  normalized,
 		CreatedAt:   now,
@@ -99,6 +100,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	chunks := s.splitter.Split(normalized)
 	embeddings, err := s.embedder.Embed(ctx, chunks)
 	if err != nil {
+		_ = s.store.UpdateStatus(ctx, saved.ID, "index_failed", now)
 		return IngestResult{}, err
 	}
 
@@ -123,13 +125,17 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	}
 
 	if err := s.store.ReplaceChunks(ctx, saved.ID, records); err != nil {
+		_ = s.store.UpdateStatus(ctx, saved.ID, "index_failed", now)
+		return IngestResult{}, err
+	}
+	if err := s.store.UpdateStatus(ctx, saved.ID, "indexed", now); err != nil {
 		return IngestResult{}, err
 	}
 
 	return IngestResult{
 		DocumentID: saved.ID,
 		ChunkCount: len(records),
-		Status:     saved.Status,
+		Status:     "indexed",
 	}, nil
 }
 

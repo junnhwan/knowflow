@@ -112,3 +112,47 @@ func TestDocumentRepository_UpsertDocumentReturnsPersistedDocumentOnConflict(t *
 		t.Fatalf("unmet expectations: %v", err)
 	}
 }
+
+func TestDocumentRepository_UpdateStatusAndListPendingForReindex(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool() error = %v", err)
+	}
+	defer mock.Close()
+
+	repo := NewDocumentRepository(mock)
+	now := time.Unix(1700000000, 0)
+
+	mock.ExpectExec("UPDATE documents SET status = \\$2, updated_at = \\$3 WHERE id = \\$1").
+		WithArgs("doc-1", "index_failed", now).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	if err := repo.UpdateStatus(context.Background(), "doc-1", "index_failed", now); err != nil {
+		t.Fatalf("UpdateStatus() error = %v", err)
+	}
+
+	rows := pgxmock.NewRows([]string{
+		"id", "user_id", "source_name", "status", "content_hash", "raw_content", "created_at", "updated_at",
+	}).AddRow(
+		"doc-1",
+		"demo-user",
+		"backend.md",
+		"index_failed",
+		"hash-1",
+		"doc content",
+		now.Add(-time.Hour),
+		now.Add(-time.Minute),
+	)
+
+	mock.ExpectQuery("SELECT id, user_id, source_name, status, content_hash, raw_content, created_at, updated_at FROM documents WHERE status IN \\('pending_index', 'index_failed'\\) AND updated_at <= \\$1 ORDER BY updated_at ASC LIMIT \\$2").
+		WithArgs(now, 10).
+		WillReturnRows(rows)
+
+	documents, err := repo.ListPendingForReindex(context.Background(), now, 10)
+	if err != nil {
+		t.Fatalf("ListPendingForReindex() error = %v", err)
+	}
+	if len(documents) != 1 || documents[0].ID != "doc-1" {
+		t.Fatalf("unexpected documents: %#v", documents)
+	}
+}
