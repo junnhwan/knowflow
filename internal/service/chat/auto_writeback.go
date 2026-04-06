@@ -111,13 +111,28 @@ func (o *Orchestrator) maybeAutoWriteback(ctx context.Context, result preparedQu
 	}
 
 	startedAt := time.Now()
-	_, err := o.tools.Execute(ctx, "upsert_knowledge", map[string]any{
+	draft, err := o.knowledgeExtractor.Extract(ctx, KnowledgeExtractionRequest{
+		UserID:    result.request.UserID,
+		SessionID: result.sessionID,
+		Question:  result.request.Message,
+		Answer:    answer,
+		Citations: result.citations,
+	})
+	if err != nil {
+		draft = buildFallbackKnowledgeDraft(result.request.Message, answer, result.citations)
+	}
+	_, err = o.tools.Execute(ctx, "upsert_knowledge", map[string]any{
 		"user_id":           result.request.UserID,
 		"session_id":        result.sessionID,
 		"source_message_id": round.AssistantMessage.ID,
 		"document_id":       deriveDocumentID(result.citations),
 		"source_type":       "auto_chat_round",
-		"content":           buildAutoKnowledgeContent(result.request.Message, answer, result.citations),
+		"title":             fallbackString(draft.Title, deriveDraftTitle(result.request.Message)),
+		"summary":           fallbackString(draft.Summary, deriveDraftSummary(answer)),
+		"content":           fallbackString(draft.Content, buildAutoKnowledgeContent(result.request.Message, answer, result.citations)),
+		"keywords":          draft.Keywords,
+		"review_status":     fallbackString(draft.ReviewStatus, "draft"),
+		"quality_score":     draft.QualityScore,
 	})
 	trace := buildAutoWritebackTrace("upsert_knowledge", startedAt, err)
 	return &trace
@@ -133,4 +148,11 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func fallbackString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }

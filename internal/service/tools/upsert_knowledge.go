@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"knowflow/internal/domain/knowledge"
@@ -48,13 +49,28 @@ func (t *UpsertKnowledgeTool) Execute(ctx context.Context, input map[string]any)
 	documentID, _ := input["document_id"].(string)
 	content, _ := input["content"].(string)
 	sourceType, _ := input["source_type"].(string)
+	title, _ := input["title"].(string)
+	summary, _ := input["summary"].(string)
+	reviewStatus, _ := input["review_status"].(string)
+	dedupeHash, _ := input["dedupe_hash"].(string)
 	if sourceType == "" {
 		sourceType = "manual"
+	}
+	if reviewStatus == "" {
+		reviewStatus = "draft"
 	}
 	if content == "" {
 		return Output{Status: "error", Error: "content is required"}, fmt.Errorf("content is required")
 	}
 
+	keywords := knowledgeservice.NormalizeKeywords(parseKeywords(input["keywords"]))
+	qualityScore := parseFloat(input["quality_score"])
+	if qualityScore <= 0 {
+		qualityScore = knowledgeservice.BuildQualityScore(summary, content, keywords)
+	}
+	if dedupeHash == "" {
+		dedupeHash = knowledgeservice.BuildDedupeHash(title, summary, content)
+	}
 	entry := knowledge.Entry{
 		ID:              t.newID(),
 		UserID:          userID,
@@ -62,8 +78,14 @@ func (t *UpsertKnowledgeTool) Execute(ctx context.Context, input map[string]any)
 		SourceMessageID: sourceMessageID,
 		DocumentID:      documentID,
 		SourceType:      sourceType,
+		Title:           strings.TrimSpace(title),
+		Summary:         strings.TrimSpace(summary),
 		Content:         content,
+		Keywords:        keywords,
 		Status:          "pending_index",
+		ReviewStatus:    reviewStatus,
+		QualityScore:    qualityScore,
+		DedupeHash:      strings.TrimSpace(dedupeHash),
 		CreatedAt:       t.now(),
 		UpdatedAt:       t.now(),
 	}
@@ -82,4 +104,61 @@ func (t *UpsertKnowledgeTool) Execute(ctx context.Context, input map[string]any)
 			"chunk_count": indexResult.ChunkCount,
 		},
 	}, nil
+}
+
+func parseKeywords(raw any) []string {
+	switch value := raw.(type) {
+	case nil:
+		return nil
+	case []string:
+		return compactKeywords(value)
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			text, _ := item.(string)
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			out = append(out, text)
+		}
+		return compactKeywords(out)
+	default:
+		return nil
+	}
+}
+
+func compactKeywords(keywords []string) []string {
+	if len(keywords) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(keywords))
+	out := make([]string, 0, len(keywords))
+	for _, keyword := range keywords {
+		trimmed := strings.TrimSpace(keyword)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if _, exists := seen[lower]; exists {
+			continue
+		}
+		seen[lower] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func parseFloat(raw any) float64 {
+	switch value := raw.(type) {
+	case float64:
+		return value
+	case float32:
+		return float64(value)
+	case int:
+		return float64(value)
+	case int64:
+		return float64(value)
+	default:
+		return 0
+	}
 }

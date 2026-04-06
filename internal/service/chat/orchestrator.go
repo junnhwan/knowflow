@@ -32,19 +32,24 @@ type ToolExecutor interface {
 	Execute(ctx context.Context, name string, input map[string]any) (tools.Output, error)
 }
 
+type KnowledgeExtractor interface {
+	Extract(ctx context.Context, req KnowledgeExtractionRequest) (KnowledgeDraft, error)
+}
+
 type Answerer interface {
 	Generate(ctx context.Context, req PromptRequest) (PromptResult, error)
 	Stream(ctx context.Context, req PromptRequest, onDelta func(string) error) (PromptResult, error)
 }
 
 type Dependencies struct {
-	ChatStore     ChatStore
-	Memory        MemoryService
-	Tools         ToolExecutor
-	Answerer      Answerer
-	AutoKnowledge AutoKnowledgeConfig
-	Now           func() time.Time
-	NewID         func(prefix string) string
+	ChatStore          ChatStore
+	Memory             MemoryService
+	Tools              ToolExecutor
+	KnowledgeExtractor KnowledgeExtractor
+	Answerer           Answerer
+	AutoKnowledge      AutoKnowledgeConfig
+	Now                func() time.Time
+	NewID              func(prefix string) string
 }
 
 type PromptRequest struct {
@@ -75,13 +80,14 @@ type QueryResponse struct {
 }
 
 type Orchestrator struct {
-	store         ChatStore
-	memory        MemoryService
-	tools         ToolExecutor
-	answerer      Answerer
-	autoKnowledge AutoKnowledgeConfig
-	now           func() time.Time
-	newID         func(prefix string) string
+	store              ChatStore
+	memory             MemoryService
+	tools              ToolExecutor
+	knowledgeExtractor KnowledgeExtractor
+	answerer           Answerer
+	autoKnowledge      AutoKnowledgeConfig
+	now                func() time.Time
+	newID              func(prefix string) string
 }
 
 func NewOrchestrator(deps Dependencies) *Orchestrator {
@@ -96,13 +102,14 @@ func NewOrchestrator(deps Dependencies) *Orchestrator {
 		}
 	}
 	return &Orchestrator{
-		store:         deps.ChatStore,
-		memory:        deps.Memory,
-		tools:         deps.Tools,
-		answerer:      deps.Answerer,
-		autoKnowledge: defaultAutoKnowledgeConfig(deps.AutoKnowledge),
-		now:           now,
-		newID:         newID,
+		store:              deps.ChatStore,
+		memory:             deps.Memory,
+		tools:              deps.Tools,
+		knowledgeExtractor: defaultKnowledgeExtractor(deps.KnowledgeExtractor),
+		answerer:           deps.Answerer,
+		autoKnowledge:      defaultAutoKnowledgeConfig(deps.AutoKnowledge),
+		now:                now,
+		newID:              newID,
 	}
 }
 

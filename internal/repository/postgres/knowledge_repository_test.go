@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"knowflow/internal/domain/knowledge"
+	knowledgeservice "knowflow/internal/service/knowledge"
 
 	pgxmock "github.com/pashagolub/pgxmock/v4"
 )
@@ -21,7 +22,7 @@ func TestKnowledgeRepository_GetByIDReturnsPersistedEntry(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 
 	rows := pgxmock.NewRows([]string{
-		"id", "user_id", "session_id", "source_message_id", "document_id", "source_type", "content", "status", "created_at", "updated_at",
+		"id", "user_id", "session_id", "source_message_id", "document_id", "source_type", "title", "summary", "content", "keywords", "status", "review_status", "quality_score", "dedupe_hash", "merged_into_id", "disabled_at", "created_at", "updated_at",
 	}).AddRow(
 		"knowledge-1",
 		"demo-user",
@@ -29,13 +30,21 @@ func TestKnowledgeRepository_GetByIDReturnsPersistedEntry(t *testing.T) {
 		"msg-1",
 		"doc-1",
 		"qa",
+		"GMP 调度核心结论",
+		"Go 运行时采用 GMP 协作调度。",
 		"Go 面试里经常会追问 GMP 调度模型。",
+		`["gmp","scheduler"]`,
 		"indexed",
+		"draft",
+		0.91,
+		"hash-gmp",
+		"",
+		nil,
 		now,
 		now,
 	)
 
-	mock.ExpectQuery("SELECT id, user_id, session_id, source_message_id, document_id, source_type, content, status, created_at, updated_at FROM knowledge_entries WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, user_id, session_id, source_message_id, document_id, source_type, title, summary, content, keywords, status, review_status, quality_score, dedupe_hash, merged_into_id, disabled_at, created_at, updated_at FROM knowledge_entries WHERE id = \\$1").
 		WithArgs("knowledge-1").
 		WillReturnRows(rows)
 
@@ -46,6 +55,15 @@ func TestKnowledgeRepository_GetByIDReturnsPersistedEntry(t *testing.T) {
 
 	if entry.SourceType != "qa" {
 		t.Fatalf("expected source type qa, got %s", entry.SourceType)
+	}
+	if entry.Title != "GMP 调度核心结论" {
+		t.Fatalf("expected title to be hydrated, got %s", entry.Title)
+	}
+	if entry.ReviewStatus != "draft" {
+		t.Fatalf("expected review status draft, got %s", entry.ReviewStatus)
+	}
+	if len(entry.Keywords) != 2 {
+		t.Fatalf("expected keywords to be hydrated, got %#v", entry.Keywords)
 	}
 }
 
@@ -168,7 +186,7 @@ func TestKnowledgeRepository_UpdateStatusAndListPendingForReindex(t *testing.T) 
 	}
 
 	rows := pgxmock.NewRows([]string{
-		"id", "user_id", "session_id", "source_message_id", "document_id", "source_type", "content", "status", "created_at", "updated_at",
+		"id", "user_id", "session_id", "source_message_id", "document_id", "source_type", "title", "summary", "content", "keywords", "status", "review_status", "quality_score", "dedupe_hash", "merged_into_id", "disabled_at", "created_at", "updated_at",
 	}).AddRow(
 		"knowledge-1",
 		"demo-user",
@@ -176,13 +194,21 @@ func TestKnowledgeRepository_UpdateStatusAndListPendingForReindex(t *testing.T) 
 		"msg-1",
 		"doc-1",
 		"qa",
+		"GMP 调度",
+		"运行时调度摘要",
 		"GMP 中 P 负责承载可运行的 G。",
+		`["gmp","runtime"]`,
 		"index_failed",
+		"draft",
+		0.78,
+		"hash-gmp",
+		"",
+		nil,
 		now.Add(-time.Hour),
 		now.Add(-time.Minute),
 	)
 
-	mock.ExpectQuery("SELECT id, user_id, session_id, source_message_id, document_id, source_type, content, status, created_at, updated_at FROM knowledge_entries WHERE status IN \\('pending_index', 'index_failed'\\) AND updated_at <= \\$1 ORDER BY updated_at ASC LIMIT \\$2").
+	mock.ExpectQuery("SELECT id, user_id, session_id, source_message_id, document_id, source_type, title, summary, content, keywords, status, review_status, quality_score, dedupe_hash, merged_into_id, disabled_at, created_at, updated_at FROM knowledge_entries WHERE status IN \\('pending_index', 'index_failed'\\) AND updated_at <= \\$1 ORDER BY updated_at ASC LIMIT \\$2").
 		WithArgs(now, 10).
 		WillReturnRows(rows)
 
@@ -191,6 +217,105 @@ func TestKnowledgeRepository_UpdateStatusAndListPendingForReindex(t *testing.T) 
 		t.Fatalf("ListPendingForReindex() error = %v", err)
 	}
 	if len(entries) != 1 || entries[0].ID != "knowledge-1" {
+		t.Fatalf("unexpected entries: %#v", entries)
+	}
+}
+
+func TestKnowledgeRepository_UpdateDeleteChunksAndListByUser(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool() error = %v", err)
+	}
+	defer mock.Close()
+
+	repo := NewKnowledgeRepository(mock)
+	now := time.Unix(1700000000, 0)
+	disabledAt := now
+	entry := knowledge.Entry{
+		ID:           "knowledge-1",
+		UserID:       "demo-user",
+		SessionID:    "session-1",
+		SourceType:   "manual",
+		Title:        "Redis 双层记忆",
+		Summary:      "最近窗口与历史摘要一起工作。",
+		Content:      "Redis 双层记忆会保留最近多轮上下文，并在阈值触发时压缩更早历史。",
+		Keywords:     []string{"redis", "memory"},
+		Status:       "indexed",
+		ReviewStatus: "active",
+		QualityScore: 0.9,
+		DedupeHash:   "hash-redis",
+		DisabledAt:   &disabledAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	mock.ExpectExec("UPDATE knowledge_entries SET").
+		WithArgs(
+			entry.ID,
+			entry.UserID,
+			entry.SessionID,
+			entry.SourceMessageID,
+			entry.DocumentID,
+			entry.SourceType,
+			entry.Title,
+			entry.Summary,
+			entry.Content,
+			pgxmock.AnyArg(),
+			entry.Status,
+			entry.ReviewStatus,
+			entry.QualityScore,
+			entry.DedupeHash,
+			entry.MergedIntoID,
+			entry.DisabledAt,
+			entry.CreatedAt,
+			entry.UpdatedAt,
+		).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	if err := repo.Update(context.Background(), entry); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	mock.ExpectExec("DELETE FROM knowledge_chunks WHERE knowledge_entry_id = \\$1").
+		WithArgs("knowledge-1").
+		WillReturnResult(pgxmock.NewResult("DELETE", 2))
+
+	if err := repo.DeleteChunks(context.Background(), "knowledge-1"); err != nil {
+		t.Fatalf("DeleteChunks() error = %v", err)
+	}
+
+	rows := pgxmock.NewRows([]string{
+		"id", "user_id", "session_id", "source_message_id", "document_id", "source_type", "title", "summary", "content", "keywords", "status", "review_status", "quality_score", "dedupe_hash", "merged_into_id", "disabled_at", "created_at", "updated_at",
+	}).AddRow(
+		entry.ID,
+		entry.UserID,
+		entry.SessionID,
+		entry.SourceMessageID,
+		entry.DocumentID,
+		entry.SourceType,
+		entry.Title,
+		entry.Summary,
+		entry.Content,
+		`["redis","memory"]`,
+		entry.Status,
+		entry.ReviewStatus,
+		entry.QualityScore,
+		entry.DedupeHash,
+		entry.MergedIntoID,
+		entry.DisabledAt,
+		entry.CreatedAt,
+		entry.UpdatedAt,
+	)
+
+	mock.ExpectQuery("SELECT id, user_id, session_id, source_message_id, document_id, source_type, title, summary, content, keywords, status, review_status, quality_score, dedupe_hash, merged_into_id, disabled_at, created_at, updated_at FROM knowledge_entries WHERE user_id = \\$1").
+		WithArgs("demo-user").
+		WillReturnRows(rows)
+
+	entries, err := repo.ListByUser(context.Background(), "demo-user", knowledgeservice.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListByUser() error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].Title != "Redis 双层记忆" {
 		t.Fatalf("unexpected entries: %#v", entries)
 	}
 }

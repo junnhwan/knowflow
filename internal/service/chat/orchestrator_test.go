@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,6 +200,16 @@ func TestOrchestrator_QueryAutoWritesKnowledgeForSubstantialAnswer(t *testing.T)
 		ChatStore: store,
 		Memory:    fakeMemoryService{},
 		Tools:     registry,
+		KnowledgeExtractor: fixedKnowledgeExtractor{
+			draft: KnowledgeDraft{
+				Title:        "KnowFlow 适合作为后端面试项目的原因",
+				Summary:      "混合检索、记忆压缩和知识反写形成了比较完整的后端知识运营闭环。",
+				Content:      "KnowFlow 通过混合检索、Redis 双层记忆和知识反写热更新，把高价值问答沉淀成后续可复用的结构化知识。",
+				Keywords:     []string{"rag", "memory", "knowledge"},
+				ReviewStatus: "draft",
+				QualityScore: 0.88,
+			},
+		},
 		Answerer: fixedAnswerer{
 			answer: "KnowFlow 会把高质量问答沉淀成结构化知识条目，再进入知识索引参与后续检索。",
 		},
@@ -225,6 +236,16 @@ func TestOrchestrator_QueryAutoWritesKnowledgeForSubstantialAnswer(t *testing.T)
 	}
 	if captured["source_message_id"] != "msg-2" {
 		t.Fatalf("unexpected source message id: %#v", captured["source_message_id"])
+	}
+	if captured["title"] != "KnowFlow 适合作为后端面试项目的原因" {
+		t.Fatalf("expected extracted title, got %#v", captured["title"])
+	}
+	if captured["review_status"] != "draft" {
+		t.Fatalf("expected draft review status, got %#v", captured["review_status"])
+	}
+	keywords, ok := captured["keywords"].([]string)
+	if !ok || len(keywords) != 3 {
+		t.Fatalf("expected structured keywords, got %#v", captured["keywords"])
 	}
 	if len(resp.ToolTraces) != 2 {
 		t.Fatalf("expected 2 tool traces, got %d", len(resp.ToolTraces))
@@ -402,6 +423,14 @@ func TestOrchestrator_QueryKeepsAnswerWhenAutoWritebackFails(t *testing.T) {
 		ChatStore: &fakeChatStore{},
 		Memory:    fakeMemoryService{},
 		Tools:     registry,
+		KnowledgeExtractor: fixedKnowledgeExtractor{
+			draft: KnowledgeDraft{
+				Title:        "自动知识沉淀策略",
+				Summary:      "写回失败不影响主回答。",
+				Content:      "沉淀失败时只记录 trace，不中断主链路。",
+				ReviewStatus: "draft",
+			},
+		},
 		Answerer: fixedAnswerer{
 			answer: "KnowFlow 会尝试把高价值对话自动沉淀，但沉淀失败不会影响主回答链路。",
 		},
@@ -428,6 +457,79 @@ func TestOrchestrator_QueryKeepsAnswerWhenAutoWritebackFails(t *testing.T) {
 	}
 	if resp.ToolTraces[1].Status != "error" {
 		t.Fatalf("expected failed writeback trace, got %#v", resp.ToolTraces[1])
+	}
+}
+
+func TestOrchestrator_QueryFallsBackToRuleDraftWhenKnowledgeExtractorFails(t *testing.T) {
+	registry := tools.NewRegistry(tools.ServiceConfig{
+		Timeout: time.Second,
+	})
+	_ = registry.Register("retrieve_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		return tools.Output{
+			Status: "success",
+			Data: retrieval.Result{
+				Citations: []retrieval.Citation{
+					{
+						DocumentID: "doc-1",
+						SourceName: "intro.md",
+						ChunkID:    "chunk-1",
+						Snippet:    "引用式回答和知识沉淀会形成后续可复用的知识闭环。",
+					},
+				},
+				Chunks: []retrieval.Candidate{
+					{
+						ChunkID:    "chunk-1",
+						DocumentID: "doc-1",
+						SourceName: "intro.md",
+						Content:    "引用式回答和知识沉淀会形成后续可复用的知识闭环。",
+					},
+				},
+				Meta: retrieval.Metadata{Hit: true},
+			},
+		}, nil
+	}))
+
+	var captured map[string]any
+	_ = registry.Register("upsert_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		captured = input
+		return tools.Output{Status: "success", Data: map[string]any{"id": "knowledge-2", "status": "indexed"}}, nil
+	}))
+
+	orch := NewOrchestrator(Dependencies{
+		ChatStore:          &fakeChatStore{},
+		Memory:             fakeMemoryService{},
+		Tools:              registry,
+		KnowledgeExtractor: fixedKnowledgeExtractor{err: errors.New("extract failed")},
+		Answerer: fixedAnswerer{
+			answer: "KnowFlow 会在回答后尝试沉淀可复用知识，但提炼失败时会退回规则式 draft 生成。",
+		},
+		Now:   func() time.Time { return time.Unix(1700000000, 0) },
+		NewID: incrementalID(),
+	})
+
+	resp, err := orch.Query(context.Background(), QueryRequest{
+		UserID:    "demo-user",
+		SessionID: "s-1",
+		Message:   "总结一下 KnowFlow 的知识沉淀策略",
+	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	if captured == nil {
+		t.Fatal("expected fallback draft to be written")
+	}
+	if captured["review_status"] != "draft" {
+		t.Fatalf("expected draft review status, got %#v", captured["review_status"])
+	}
+	if captured["title"] == "" {
+		t.Fatalf("expected fallback title, got %#v", captured["title"])
+	}
+	if content, _ := captured["content"].(string); content == "" || !containsAll(content, "问题：", "回答：") {
+		t.Fatalf("expected rule-based fallback content, got %#v", captured["content"])
+	}
+	if resp.Answer == "" {
+		t.Fatal("expected answer to be returned")
 	}
 }
 
@@ -549,4 +651,25 @@ func incrementalID() func(prefix string) string {
 		counter++
 		return fmt.Sprintf("%s-%d", prefix, counter)
 	}
+}
+
+type fixedKnowledgeExtractor struct {
+	draft KnowledgeDraft
+	err   error
+}
+
+func (f fixedKnowledgeExtractor) Extract(_ context.Context, _ KnowledgeExtractionRequest) (KnowledgeDraft, error) {
+	if f.err != nil {
+		return KnowledgeDraft{}, f.err
+	}
+	return f.draft, nil
+}
+
+func containsAll(text string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if !strings.Contains(text, pattern) {
+			return false
+		}
+	}
+	return true
 }
