@@ -8,6 +8,7 @@ import (
 
 	chatdomain "knowflow/internal/domain/chat"
 	chatservice "knowflow/internal/service/chat"
+	"knowflow/internal/service/guardrail"
 )
 
 type ChatQueryService interface {
@@ -23,12 +24,14 @@ type ConversationReader interface {
 type ChatHandler struct {
 	queryService ChatQueryService
 	reader       ConversationReader
+	guardrail    *guardrail.Service
 }
 
-func NewChatHandler(queryService ChatQueryService, reader ConversationReader) *ChatHandler {
+func NewChatHandler(queryService ChatQueryService, reader ConversationReader, guardrailService *guardrail.Service) *ChatHandler {
 	return &ChatHandler{
 		queryService: queryService,
 		reader:       reader,
+		guardrail:    guardrailService,
 	}
 }
 
@@ -37,6 +40,12 @@ func (h *ChatHandler) Query(c *gin.Context) {
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if h.guardrail != nil {
+		if err := h.guardrail.Validate(request.Message); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	request.UserID = c.GetString("user_id")
 	if request.SessionID != "" {
@@ -56,6 +65,12 @@ func (h *ChatHandler) QueryStream(c *gin.Context) {
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if h.guardrail != nil {
+		if err := h.guardrail.Validate(request.Message); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	request.UserID = c.GetString("user_id")
 

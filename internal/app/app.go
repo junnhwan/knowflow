@@ -16,6 +16,7 @@ import (
 	pgrepo "knowflow/internal/repository/postgres"
 	redisrepo "knowflow/internal/repository/redis"
 	chatservice "knowflow/internal/service/chat"
+	"knowflow/internal/service/guardrail"
 	"knowflow/internal/service/ingestion"
 	knowledgeservice "knowflow/internal/service/knowledge"
 	"knowflow/internal/service/memory"
@@ -122,13 +123,14 @@ func New(cfg config.Config) (*App, error) {
 		Tools:     registry,
 		Answerer:  chatservice.NewTelemetryAnswerer(providerLabel, answerer, metrics),
 	})
+	guardrailService := guardrail.NewService(guardrail.Config{MaxMessageLength: 2000})
 
 	app := &App{
 		Config:           cfg,
 		Logger:           logger,
 		Metrics:          metrics,
 		DocumentHandler:  handler.NewDocumentHandler(ingestionService),
-		ChatHandler:      handler.NewChatHandler(orchestrator, chatRepo),
+		ChatHandler:      handler.NewChatHandler(orchestrator, chatRepo, guardrailService),
 		KnowledgeHandler: handler.NewKnowledgeHandler(registry),
 		postgres:         postgresClient,
 		redis:            redisClient,
