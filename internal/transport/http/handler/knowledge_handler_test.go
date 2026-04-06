@@ -12,7 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	knowledgedomain "knowflow/internal/domain/knowledge"
+	reindexdomain "knowflow/internal/domain/reindex"
 	knowledgeservice "knowflow/internal/service/knowledge"
+	"knowflow/internal/service/reindexer"
 	"knowflow/internal/service/tools"
 )
 
@@ -137,6 +139,62 @@ func TestKnowledgeHandler_UpdateDeleteAndMerge(t *testing.T) {
 	}
 }
 
+func TestKnowledgeHandler_ReindexAndTaskQuery(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	tasks := &fakeReindexTaskService{
+		createResult: reindexdomain.Task{
+			ID:           "task-1",
+			Status:       "success",
+			TargetType:   "knowledge_entry",
+			TargetID:     "knowledge-1",
+			AttemptCount: 1,
+		},
+		listResult: []reindexdomain.Task{
+			{ID: "task-1", Status: "success"},
+		},
+		getResult: reindexdomain.Task{
+			ID:         "task-1",
+			Status:     "success",
+			TargetType: "knowledge_entry",
+			TargetID:   "knowledge-1",
+		},
+	}
+	handler := NewKnowledgeHandler(fakeToolExecutor{}, &fakeKnowledgeGovernanceService{}, tasks)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", "demo-user")
+	})
+	router.POST("/api/kb/reindex", handler.Reindex)
+	router.GET("/api/kb/reindex/tasks", handler.ListReindexTasks)
+	router.GET("/api/kb/reindex/tasks/:task_id", handler.GetReindexTask)
+
+	reindexReq := httptest.NewRequest(http.MethodPost, "/api/kb/reindex", strings.NewReader(`{"knowledge_entry_id":"knowledge-1"}`))
+	reindexReq.Header.Set("Content-Type", "application/json")
+	reindexRec := httptest.NewRecorder()
+	router.ServeHTTP(reindexRec, reindexReq)
+	if reindexRec.Code != http.StatusOK {
+		t.Fatalf("unexpected reindex status: %d", reindexRec.Code)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/kb/reindex/tasks", nil)
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("unexpected task list status: %d", listRec.Code)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/kb/reindex/tasks/task-1", nil)
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("unexpected task get status: %d", getRec.Code)
+	}
+	if tasks.lastCreate.KnowledgeEntryID != "knowledge-1" {
+		t.Fatalf("unexpected create request: %#v", tasks.lastCreate)
+	}
+}
+
 type fakeToolExecutor struct{}
 
 func (fakeToolExecutor) Execute(_ context.Context, _ string, _ map[string]any) (tools.Output, error) {
@@ -173,4 +231,24 @@ func (f *fakeKnowledgeGovernanceService) DisableEntry(_ context.Context, _ strin
 func (f *fakeKnowledgeGovernanceService) MergeEntries(_ context.Context, req knowledgeservice.MergeEntriesRequest) (knowledgeservice.MergeResult, error) {
 	f.lastMerge = req
 	return f.mergeResult, nil
+}
+
+type fakeReindexTaskService struct {
+	createResult reindexdomain.Task
+	listResult   []reindexdomain.Task
+	getResult    reindexdomain.Task
+	lastCreate   reindexer.CreateTaskRequest
+}
+
+func (f *fakeReindexTaskService) CreateAndProcess(_ context.Context, req reindexer.CreateTaskRequest) (reindexdomain.Task, error) {
+	f.lastCreate = req
+	return f.createResult, nil
+}
+
+func (f *fakeReindexTaskService) ListTasks(_ context.Context, _ string) ([]reindexdomain.Task, error) {
+	return f.listResult, nil
+}
+
+func (f *fakeReindexTaskService) GetTask(_ context.Context, _ string, _ string) (reindexdomain.Task, error) {
+	return f.getResult, nil
 }

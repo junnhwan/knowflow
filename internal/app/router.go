@@ -53,6 +53,8 @@ func NewRouter(app *App) *gin.Engine {
 				api.DELETE("/kb/knowledge/:knowledge_id", app.KnowledgeHandler.Delete)
 				api.POST("/kb/knowledge/:knowledge_id/merge", app.KnowledgeHandler.Merge)
 				api.POST("/kb/reindex", app.KnowledgeHandler.Reindex)
+				api.GET("/kb/reindex/tasks", app.KnowledgeHandler.ListReindexTasks)
+				api.GET("/kb/reindex/tasks/:task_id", app.KnowledgeHandler.GetReindexTask)
 			}
 		}
 	}

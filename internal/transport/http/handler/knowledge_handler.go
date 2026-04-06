@@ -7,7 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	knowledgedomain "knowflow/internal/domain/knowledge"
+	reindexdomain "knowflow/internal/domain/reindex"
 	knowledgeservice "knowflow/internal/service/knowledge"
+	"knowflow/internal/service/reindexer"
 	"knowflow/internal/service/tools"
 )
 
@@ -23,13 +25,20 @@ type KnowledgeGovernanceService interface {
 	MergeEntries(ctx context.Context, req knowledgeservice.MergeEntriesRequest) (knowledgeservice.MergeResult, error)
 }
 
+type ReindexTaskService interface {
+	CreateAndProcess(ctx context.Context, req reindexer.CreateTaskRequest) (reindexdomain.Task, error)
+	ListTasks(ctx context.Context, userID string) ([]reindexdomain.Task, error)
+	GetTask(ctx context.Context, userID, taskID string) (reindexdomain.Task, error)
+}
+
 type KnowledgeHandler struct {
 	tools      ToolExecutor
 	governance KnowledgeGovernanceService
+	reindex    ReindexTaskService
 }
 
-func NewKnowledgeHandler(tools ToolExecutor, governance KnowledgeGovernanceService, _ any) *KnowledgeHandler {
-	return &KnowledgeHandler{tools: tools, governance: governance}
+func NewKnowledgeHandler(tools ToolExecutor, governance KnowledgeGovernanceService, reindex ReindexTaskService) *KnowledgeHandler {
+	return &KnowledgeHandler{tools: tools, governance: governance, reindex: reindex}
 }
 
 func (h *KnowledgeHandler) Upsert(c *gin.Context) {
@@ -50,6 +59,22 @@ func (h *KnowledgeHandler) Upsert(c *gin.Context) {
 }
 
 func (h *KnowledgeHandler) Reindex(c *gin.Context) {
+	if h.reindex != nil {
+		var req reindexer.CreateTaskRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		req.UserID = c.GetString("user_id")
+		task, err := h.reindex.CreateAndProcess(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, task)
+		return
+	}
+
 	var payload map[string]any
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -146,4 +171,30 @@ func (h *KnowledgeHandler) Merge(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *KnowledgeHandler) ListReindexTasks(c *gin.Context) {
+	if h.reindex == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "reindex task service is not configured"})
+		return
+	}
+	tasks, err := h.reindex.ListTasks(c.Request.Context(), c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, tasks)
+}
+
+func (h *KnowledgeHandler) GetReindexTask(c *gin.Context) {
+	if h.reindex == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "reindex task service is not configured"})
+		return
+	}
+	task, err := h.reindex.GetTask(c.Request.Context(), c.GetString("user_id"), c.Param("task_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, task)
 }

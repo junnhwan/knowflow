@@ -64,6 +64,7 @@ func New(cfg config.Config) (*App, error) {
 	documentRepo := pgrepo.NewDocumentRepository(postgresClient.Pool)
 	chatRepo := pgrepo.NewChatRepository(postgresClient.Pool)
 	knowledgeRepo := pgrepo.NewKnowledgeRepository(postgresClient.Pool)
+	reindexTaskRepo := pgrepo.NewReindexTaskRepository(postgresClient.Pool)
 	memoryStore := redisrepo.NewMemoryStore(redisClient.Raw)
 
 	embedder := buildEmbedder(cfg)
@@ -121,6 +122,9 @@ func New(cfg config.Config) (*App, error) {
 	})); err != nil {
 		return nil, err
 	}
+	reindexTaskService := reindexer.NewTaskService(reindexTaskRepo, toolTaskExecutor{registry: registry}, reindexer.TaskServiceConfig{
+		Observer: metrics,
+	})
 
 	answerer, providerLabel, err := buildAnswerer(ctx, cfg)
 	if err != nil {
@@ -164,7 +168,7 @@ func New(cfg config.Config) (*App, error) {
 		Metrics:          metrics,
 		DocumentHandler:  handler.NewDocumentHandler(ingestionService),
 		ChatHandler:      handler.NewChatHandler(orchestrator, chatRepo, guardrailService, metrics, logger),
-		KnowledgeHandler: handler.NewKnowledgeHandler(registry, knowledgeGovernanceService, nil),
+		KnowledgeHandler: handler.NewKnowledgeHandler(registry, knowledgeGovernanceService, reindexTaskService),
 		postgres:         postgresClient,
 		redis:            redisClient,
 		backgroundCancel: backgroundCancel,
@@ -308,6 +312,18 @@ func (r documentReindexer) ReindexDocument(ctx context.Context, documentID strin
 
 type knowledgeReindexer struct {
 	knowledge *knowledgeservice.Service
+}
+
+type toolTaskExecutor struct {
+	registry *tools.Registry
+}
+
+func (e toolTaskExecutor) Execute(ctx context.Context, toolName string, input map[string]any) error {
+	if e.registry == nil {
+		return fmt.Errorf("tool registry is not configured")
+	}
+	_, err := e.registry.Execute(ctx, toolName, input)
+	return err
 }
 
 func (r knowledgeReindexer) ReindexEntry(ctx context.Context, entryID string) (knowledgeservice.IndexResult, error) {
