@@ -5,6 +5,7 @@ import (
 
 	"knowflow/internal/config"
 	"knowflow/internal/platform/llm"
+	chatservice "knowflow/internal/service/chat"
 )
 
 func TestBuildEmbedderUsesLocalModeByDefault(t *testing.T) {
@@ -61,5 +62,40 @@ func TestBuildRerankerUsesRemoteWithFallbackWhenConfigured(t *testing.T) {
 
 	if _, ok := reranker.(llm.FallbackReranker); !ok {
 		t.Fatalf("expected FallbackReranker, got %T", reranker)
+	}
+}
+
+func TestBuildKnowledgeExtractorUsesRuleFallbackInLocalMode(t *testing.T) {
+	extractor := buildKnowledgeExtractor(config.Config{
+		Model: config.ModelConfig{
+			Provider: "local",
+		},
+	})
+
+	fallback, ok := extractor.(chatservice.FallbackKnowledgeExtractor)
+	if !ok {
+		t.Fatalf("expected wrapped extractor, got %T", extractor)
+	}
+	if fallback.Primary != nil {
+		t.Fatalf("expected no remote primary in local mode")
+	}
+}
+
+func TestBuildKnowledgeExtractorUsesRemotePrimaryWhenConfigured(t *testing.T) {
+	extractor := buildKnowledgeExtractor(config.Config{
+		Model: config.ModelConfig{
+			Provider:  "dashscope",
+			BaseURL:   "https://example.com/compatible-mode/v1",
+			APIKey:    "chat-key",
+			ChatModel: "qwen-plus",
+		},
+	})
+
+	fallback, ok := extractor.(chatservice.FallbackKnowledgeExtractor)
+	if !ok {
+		t.Fatalf("expected wrapped extractor, got %T", extractor)
+	}
+	if fallback.Primary == nil {
+		t.Fatalf("expected remote primary to be configured")
 	}
 }

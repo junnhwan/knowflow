@@ -77,6 +77,14 @@ func New(cfg config.Config) (*App, error) {
 		ChunkSize:    700,
 		ChunkOverlap: 150,
 	})
+	knowledgeGovernanceService := knowledgeservice.NewGovernanceService(
+		knowledgeRepo,
+		knowledgeRepo,
+		knowledgeRepo,
+		knowledgeReindexer{knowledge: knowledgeIndexService},
+		embedder,
+		knowledgeservice.GovernanceConfig{},
+	)
 	searchRepo := pgrepo.NewHybridSearchRepository(documentRepo, knowledgeRepo)
 	retrievalService := retrieval.NewService(embedder, searchRepo, reranker, retrieval.Config{
 		VectorTopK:  cfg.Retrieval.VectorTopK,
@@ -120,10 +128,11 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	orchestrator := chatservice.NewOrchestrator(chatservice.Dependencies{
-		ChatStore: chatRepo,
-		Memory:    memoryService,
-		Tools:     registry,
-		Answerer:  chatservice.NewTelemetryAnswerer(providerLabel, answerer, metrics),
+		ChatStore:          chatRepo,
+		Memory:             memoryService,
+		Tools:              registry,
+		KnowledgeExtractor: buildKnowledgeExtractor(cfg),
+		Answerer:           chatservice.NewTelemetryAnswerer(providerLabel, answerer, metrics),
 	})
 	guardrailService := guardrail.NewService(guardrail.Config{MaxMessageLength: 2000})
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
@@ -152,7 +161,7 @@ func New(cfg config.Config) (*App, error) {
 		Metrics:          metrics,
 		DocumentHandler:  handler.NewDocumentHandler(ingestionService),
 		ChatHandler:      handler.NewChatHandler(orchestrator, chatRepo, guardrailService, metrics, logger),
-		KnowledgeHandler: handler.NewKnowledgeHandler(registry),
+		KnowledgeHandler: handler.NewKnowledgeHandler(registry, knowledgeGovernanceService, nil),
 		postgres:         postgresClient,
 		redis:            redisClient,
 		backgroundCancel: backgroundCancel,
@@ -208,6 +217,26 @@ func buildAnswerer(ctx context.Context, cfg config.Config) (chatservice.Answerer
 	return chatservice.NewLocalAnswerer(), "local", nil
 }
 
+func buildKnowledgeExtractor(cfg config.Config) chatservice.KnowledgeExtractor {
+	fallback := chatservice.RuleKnowledgeExtractor{}
+	if cfg.Model.Provider == "local" || cfg.Model.APIKey == "" {
+		return chatservice.FallbackKnowledgeExtractor{
+			Fallback: fallback,
+		}
+	}
+	return chatservice.FallbackKnowledgeExtractor{
+		Primary: chatservice.LLMKnowledgeExtractor{
+			Generator: llm.OpenAICompatibleTextGenerator{
+				BaseURL:     cfg.Model.BaseURL,
+				APIKey:      cfg.Model.APIKey,
+				Model:       cfg.Model.ChatModel,
+				Temperature: 0.1,
+			},
+		},
+		Fallback: fallback,
+	}
+}
+
 func (a *App) Run() error {
 	if err := a.Server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("listen and serve: %w", err)
@@ -258,8 +287,12 @@ type knowledgeReindexer struct {
 	knowledge *knowledgeservice.Service
 }
 
+func (r knowledgeReindexer) ReindexEntry(ctx context.Context, entryID string) (knowledgeservice.IndexResult, error) {
+	return r.knowledge.ReindexEntry(ctx, entryID)
+}
+
 func (r knowledgeReindexer) ReindexKnowledgeEntry(ctx context.Context, entryID string) (map[string]any, error) {
-	result, err := r.knowledge.ReindexEntry(ctx, entryID)
+	result, err := r.ReindexEntry(ctx, entryID)
 	if err != nil {
 		return nil, err
 	}

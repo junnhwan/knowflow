@@ -47,6 +47,11 @@ func NewRouter(app *App) *gin.Engine {
 			}
 			if app.KnowledgeHandler != nil {
 				api.POST("/kb/knowledge", app.KnowledgeHandler.Upsert)
+				api.GET("/kb/knowledge", app.KnowledgeHandler.List)
+				api.GET("/kb/knowledge/:knowledge_id", app.KnowledgeHandler.Get)
+				api.PUT("/kb/knowledge/:knowledge_id", app.KnowledgeHandler.Update)
+				api.DELETE("/kb/knowledge/:knowledge_id", app.KnowledgeHandler.Delete)
+				api.POST("/kb/knowledge/:knowledge_id/merge", app.KnowledgeHandler.Merge)
 				api.POST("/kb/reindex", app.KnowledgeHandler.Reindex)
 			}
 		}
