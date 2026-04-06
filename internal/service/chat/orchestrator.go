@@ -38,12 +38,13 @@ type Answerer interface {
 }
 
 type Dependencies struct {
-	ChatStore ChatStore
-	Memory    MemoryService
-	Tools     ToolExecutor
-	Answerer  Answerer
-	Now       func() time.Time
-	NewID     func(prefix string) string
+	ChatStore     ChatStore
+	Memory        MemoryService
+	Tools         ToolExecutor
+	Answerer      Answerer
+	AutoKnowledge AutoKnowledgeConfig
+	Now           func() time.Time
+	NewID         func(prefix string) string
 }
 
 type PromptRequest struct {
@@ -74,12 +75,13 @@ type QueryResponse struct {
 }
 
 type Orchestrator struct {
-	store    ChatStore
-	memory   MemoryService
-	tools    ToolExecutor
-	answerer Answerer
-	now      func() time.Time
-	newID    func(prefix string) string
+	store         ChatStore
+	memory        MemoryService
+	tools         ToolExecutor
+	answerer      Answerer
+	autoKnowledge AutoKnowledgeConfig
+	now           func() time.Time
+	newID         func(prefix string) string
 }
 
 func NewOrchestrator(deps Dependencies) *Orchestrator {
@@ -94,12 +96,13 @@ func NewOrchestrator(deps Dependencies) *Orchestrator {
 		}
 	}
 	return &Orchestrator{
-		store:    deps.ChatStore,
-		memory:   deps.Memory,
-		tools:    deps.Tools,
-		answerer: deps.Answerer,
-		now:      now,
-		newID:    newID,
+		store:         deps.ChatStore,
+		memory:        deps.Memory,
+		tools:         deps.Tools,
+		answerer:      deps.Answerer,
+		autoKnowledge: defaultAutoKnowledgeConfig(deps.AutoKnowledge),
+		now:           now,
+		newID:         newID,
 	}
 }
 
@@ -177,7 +180,7 @@ func (o *Orchestrator) prepareQuery(ctx context.Context, req QueryRequest) (prep
 	retrievalResult := extractRetrievalResult(toolOutput)
 	if !retrievalResult.Meta.Hit || len(retrievalResult.Citations) == 0 {
 		answer := "当前知识库里没有足够依据来支持这个问题，请先补充相关面试资料或知识条目。"
-		if err := o.persistRound(ctx, sessionID, req.Message, answer, nil, nil); err != nil {
+		if _, err := o.persistRound(ctx, sessionID, req.Message, answer, nil, nil); err != nil {
 			return preparedQuery{}, err
 		}
 		_, _ = o.memory.Update(ctx, memory.UpdateRequest{
@@ -220,7 +223,8 @@ func (o *Orchestrator) prepareQuery(ctx context.Context, req QueryRequest) (prep
 }
 
 func (o *Orchestrator) finalizeQuery(ctx context.Context, result preparedQuery, answer string) (QueryResponse, error) {
-	if err := o.persistRound(ctx, result.sessionID, result.request.Message, answer, nil, nil); err != nil {
+	round, err := o.persistRound(ctx, result.sessionID, result.request.Message, answer, nil, nil)
+	if err != nil {
 		return QueryResponse{}, err
 	}
 
@@ -233,11 +237,16 @@ func (o *Orchestrator) finalizeQuery(ctx context.Context, result preparedQuery, 
 		},
 	})
 
+	toolTraces := append([]tools.Trace(nil), result.toolTraces...)
+	if trace := o.maybeAutoWriteback(ctx, result, round, answer); trace != nil {
+		toolTraces = append(toolTraces, *trace)
+	}
+
 	return QueryResponse{
 		SessionID:     result.sessionID,
 		Answer:        answer,
 		Citations:     result.citations,
-		ToolTraces:    result.toolTraces,
+		ToolTraces:    toolTraces,
 		RetrievalMeta: result.retrievalMeta,
 	}, nil
 }
@@ -276,7 +285,7 @@ func buildSessionTitle(message string) string {
 	return string(runes[:24])
 }
 
-func (o *Orchestrator) persistRound(ctx context.Context, sessionID, question, answer string, toolInput, toolOutput map[string]any) error {
+func (o *Orchestrator) persistRound(ctx context.Context, sessionID, question, answer string, toolInput, toolOutput map[string]any) (persistedRound, error) {
 	userMessage := chatdomain.Message{
 		ID:        o.newID("msg"),
 		SessionID: sessionID,
@@ -285,7 +294,7 @@ func (o *Orchestrator) persistRound(ctx context.Context, sessionID, question, an
 		CreatedAt: o.now(),
 	}
 	if err := o.store.AppendMessage(ctx, userMessage); err != nil {
-		return err
+		return persistedRound{}, err
 	}
 
 	assistantMessage := chatdomain.Message{
@@ -297,7 +306,13 @@ func (o *Orchestrator) persistRound(ctx context.Context, sessionID, question, an
 		ToolOutput: toolOutput,
 		CreatedAt:  o.now(),
 	}
-	return o.store.AppendMessage(ctx, assistantMessage)
+	if err := o.store.AppendMessage(ctx, assistantMessage); err != nil {
+		return persistedRound{}, err
+	}
+	return persistedRound{
+		UserMessage:      userMessage,
+		AssistantMessage: assistantMessage,
+	}, nil
 }
 
 func extractRetrievalResult(output tools.Output) retrieval.Result {
