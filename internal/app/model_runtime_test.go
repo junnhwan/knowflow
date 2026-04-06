@@ -20,7 +20,7 @@ func TestBuildEmbedderUsesLocalModeByDefault(t *testing.T) {
 	}
 }
 
-func TestBuildEmbedderUsesRemoteWithFallbackWhenConfigured(t *testing.T) {
+func TestBuildEmbedderUsesRemoteOnlyWhenConfigured(t *testing.T) {
 	embedder := buildEmbedder(config.Config{
 		Model: config.ModelConfig{
 			Provider:           "dashscope",
@@ -31,8 +31,8 @@ func TestBuildEmbedderUsesRemoteWithFallbackWhenConfigured(t *testing.T) {
 		},
 	})
 
-	if _, ok := embedder.(llm.FallbackEmbedder); !ok {
-		t.Fatalf("expected FallbackEmbedder, got %T", embedder)
+	if _, ok := embedder.(llm.OpenAICompatibleEmbedder); !ok {
+		t.Fatalf("expected OpenAICompatibleEmbedder, got %T", embedder)
 	}
 }
 

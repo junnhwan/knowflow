@@ -37,6 +37,9 @@ func shouldAutoWriteback(cfg AutoKnowledgeConfig, question, answer string, citat
 	if !meta.Hit || len(citations) == 0 {
 		return false
 	}
+	if hasKnowledgeCitation(citations) {
+		return false
+	}
 	if utf8.RuneCountInString(strings.TrimSpace(question)) < cfg.MinQuestionRunes {
 		return false
 	}
@@ -44,6 +47,15 @@ func shouldAutoWriteback(cfg AutoKnowledgeConfig, question, answer string, citat
 		return false
 	}
 	return true
+}
+
+func hasKnowledgeCitation(citations []retrieval.Citation) bool {
+	for _, citation := range citations {
+		if citation.SourceKind == "knowledge" || citation.KnowledgeEntryID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func buildAutoKnowledgeContent(question, answer string, citations []retrieval.Citation) string {

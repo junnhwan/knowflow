@@ -11,9 +11,10 @@ type Config struct {
 }
 
 type Service struct {
-	maxMessageLength int
-	injectionRules   []string
-	secretRules      []string
+	maxMessageLength  int
+	injectionRules    []string
+	exfiltrationRules []string
+	sensitiveTargets  []string
 }
 
 func NewService(cfg Config) *Service {
@@ -32,14 +33,24 @@ func NewService(cfg Config) *Service {
 			"ignore all previous instructions",
 			"reveal system prompt",
 		},
-		secretRules: []string{
+		exfiltrationRules: []string{
+			"打印",
+			"输出",
+			"显示",
+			"透露",
+			"泄露",
+			"reveal",
+			"dump",
+			"expose",
+		},
+		sensitiveTargets: []string{
 			"api key",
 			"apikey",
-			"密钥",
 			"系统提示词",
 			"内部配置",
-			"token",
-			"secret",
+			"access key",
+			"私钥",
+			"密钥",
 		},
 	}
 }
@@ -59,12 +70,29 @@ func (s *Service) Validate(message string) error {
 			return violation("prompt_injection", "消息命中基础安全规则，请调整提问方式")
 		}
 	}
-	for _, rule := range s.secretRules {
-		if strings.Contains(lower, strings.ToLower(rule)) {
-			return violation("sensitive_request", "消息涉及敏感信息请求，已拒绝处理")
-		}
+	if containsSensitiveExfiltration(lower, s.exfiltrationRules, s.sensitiveTargets) {
+		return violation("sensitive_request", "消息涉及敏感信息请求，已拒绝处理")
 	}
 	return nil
+}
+
+func containsSensitiveExfiltration(message string, exfiltrationRules, sensitiveTargets []string) bool {
+	hasAction := false
+	for _, rule := range exfiltrationRules {
+		if strings.Contains(message, strings.ToLower(rule)) {
+			hasAction = true
+			break
+		}
+	}
+	if !hasAction {
+		return false
+	}
+	for _, target := range sensitiveTargets {
+		if strings.Contains(message, strings.ToLower(target)) {
+			return true
+		}
+	}
+	return false
 }
 
 type ViolationError struct {

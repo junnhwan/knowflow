@@ -299,6 +299,73 @@ func TestOrchestrator_QuerySkipsAutoWritebackForShortAnswer(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_QuerySkipsAutoWritebackWhenRetrievalComesFromKnowledge(t *testing.T) {
+	registry := tools.NewRegistry(tools.ServiceConfig{
+		Timeout: time.Second,
+	})
+	_ = registry.Register("retrieve_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		return tools.Output{
+			Status: "success",
+			Data: retrieval.Result{
+				Citations: []retrieval.Citation{
+					{
+						KnowledgeEntryID: "knowledge-1",
+						SourceName:       "knowledge:knowledge-1",
+						SourceKind:       "knowledge",
+						ChunkID:          "knowledge-chunk-1",
+						Snippet:          "这是已经沉淀过的知识条目。",
+					},
+				},
+				Chunks: []retrieval.Candidate{
+					{
+						ChunkID:          "knowledge-chunk-1",
+						KnowledgeEntryID: "knowledge-1",
+						SourceName:       "knowledge:knowledge-1",
+						SourceKind:       "knowledge",
+						Content:          "这是已经沉淀过的知识条目。",
+					},
+				},
+				Meta: retrieval.Metadata{Hit: true},
+			},
+		}, nil
+	}))
+
+	called := false
+	_ = registry.Register("upsert_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		called = true
+		return tools.Output{Status: "success", Data: input}, nil
+	}))
+
+	orch := NewOrchestrator(Dependencies{
+		ChatStore: &fakeChatStore{},
+		Memory:    fakeMemoryService{},
+		Tools:     registry,
+		Answerer: fixedAnswerer{
+			answer: "这条回答虽然够长，但它本身就是基于已有知识条目整理出来的，不应该再自动反写一次。",
+		},
+		Now: func() time.Time {
+			return time.Unix(1700000000, 0)
+		},
+		NewID: incrementalID(),
+	})
+
+	resp, err := orch.Query(context.Background(), QueryRequest{
+		UserID:    "demo-user",
+		SessionID: "s-1",
+		Message:   "总结一下已经沉淀过的知识点",
+	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	if called {
+		t.Fatal("expected knowledge-backed answer to skip auto writeback")
+	}
+	if len(resp.ToolTraces) != 1 {
+		t.Fatalf("expected only retrieval trace, got %d", len(resp.ToolTraces))
+	}
+}
+
 func TestOrchestrator_QueryKeepsAnswerWhenAutoWritebackFails(t *testing.T) {
 	registry := tools.NewRegistry(tools.ServiceConfig{
 		Timeout: time.Second,

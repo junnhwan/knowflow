@@ -46,3 +46,12 @@ func TestService_ValidateAllowsNormalInterviewQuestion(t *testing.T) {
 		t.Fatalf("expected normal message to pass, got %v", err)
 	}
 }
+
+func TestService_ValidateAllowsNormalSecurityInterviewQuestion(t *testing.T) {
+	svc := NewService(Config{MaxMessageLength: 2000})
+
+	err := svc.Validate("请解释一下 JWT token、API key 轮换和 secret 管理之间的区别")
+	if err != nil {
+		t.Fatalf("expected security interview question to pass, got %v", err)
+	}
+}

@@ -173,14 +173,11 @@ func buildEmbedder(cfg config.Config) llm.Embedder {
 	if cfg.Model.Provider == "local" || cfg.Model.EmbeddingAPIKey == "" {
 		return local
 	}
-	return llm.FallbackEmbedder{
-		Primary: llm.OpenAICompatibleEmbedder{
-			BaseURL:    cfg.Model.EmbeddingBaseURL,
-			APIKey:     cfg.Model.EmbeddingAPIKey,
-			Model:      cfg.Model.EmbeddingModel,
-			Dimensions: cfg.Model.EmbeddingDimension,
-		},
-		Fallback: local,
+	return llm.OpenAICompatibleEmbedder{
+		BaseURL:    cfg.Model.EmbeddingBaseURL,
+		APIKey:     cfg.Model.EmbeddingAPIKey,
+		Model:      cfg.Model.EmbeddingModel,
+		Dimensions: cfg.Model.EmbeddingDimension,
 	}
 }
 
