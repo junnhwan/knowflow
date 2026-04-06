@@ -48,6 +48,10 @@ type GuardrailLogger interface {
 	Warn(msg string, args ...any)
 }
 
+type KnowledgeObserver interface {
+	RecordKnowledgeExtraction(result string)
+}
+
 type Answerer interface {
 	Generate(ctx context.Context, req PromptRequest) (PromptResult, error)
 	Stream(ctx context.Context, req PromptRequest, onDelta func(string) error) (PromptResult, error)
@@ -61,6 +65,7 @@ type Dependencies struct {
 	OutputGuardrail    OutputGuardrail
 	GuardrailObserver  GuardrailObserver
 	GuardrailLogger    GuardrailLogger
+	KnowledgeObserver  KnowledgeObserver
 	Answerer           Answerer
 	AutoKnowledge      AutoKnowledgeConfig
 	Now                func() time.Time
@@ -102,6 +107,7 @@ type Orchestrator struct {
 	outputGuardrail    OutputGuardrail
 	guardrailObserver  GuardrailObserver
 	guardrailLogger    GuardrailLogger
+	knowledgeObserver  KnowledgeObserver
 	answerer           Answerer
 	autoKnowledge      AutoKnowledgeConfig
 	now                func() time.Time
@@ -127,6 +133,7 @@ func NewOrchestrator(deps Dependencies) *Orchestrator {
 		outputGuardrail:    deps.OutputGuardrail,
 		guardrailObserver:  deps.GuardrailObserver,
 		guardrailLogger:    deps.GuardrailLogger,
+		knowledgeObserver:  deps.KnowledgeObserver,
 		answerer:           deps.Answerer,
 		autoKnowledge:      defaultAutoKnowledgeConfig(deps.AutoKnowledge),
 		now:                now,

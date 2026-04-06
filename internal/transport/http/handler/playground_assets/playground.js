@@ -119,6 +119,8 @@ function bindEvents() {
   document.getElementById("uploadFileButton").addEventListener("click", () => onUploadDocument(true));
   document.getElementById("upsertKnowledgeButton").addEventListener("click", onUpsertKnowledge);
   document.getElementById("reindexButton").addEventListener("click", onReindexDocument);
+  document.getElementById("loadKnowledgeButton").addEventListener("click", loadKnowledgeEntries);
+  document.getElementById("loadReindexTasksButton").addEventListener("click", onLoadReindexTasks);
   document.getElementById("refreshSessionsButton").addEventListener("click", onRefreshSessions);
   document.getElementById("queryButton").addEventListener("click", onQuery);
   document.getElementById("streamButton").addEventListener("click", onStreamQuery);
@@ -316,6 +318,44 @@ async function onReindexDocument() {
     pushActivity(`索引已重建，${label}`, "warn");
   } catch (error) {
     handleError("重建索引失败", error);
+  }
+}
+
+async function loadKnowledgeEntries() {
+  syncContextFromInputs();
+  try {
+    const response = await fetch(resolveUrl("/api/kb/knowledge"), {
+      headers: {
+        "X-User-ID": state.userId,
+      },
+    });
+    const data = await parseJsonResponse(response);
+    state.lastRaw = data;
+    refs.knowledgeSummary.textContent = safePretty(data);
+    renderDebug();
+    const size = Array.isArray(data) ? data.length : 0;
+    pushActivity(`知识列表已刷新，共 ${size} 条。`, "success");
+  } catch (error) {
+    handleError("加载知识列表失败", error);
+  }
+}
+
+async function onLoadReindexTasks() {
+  syncContextFromInputs();
+  try {
+    const response = await fetch(resolveUrl("/api/kb/reindex/tasks"), {
+      headers: {
+        "X-User-ID": state.userId,
+      },
+    });
+    const data = await parseJsonResponse(response);
+    state.lastRaw = data;
+    refs.knowledgeSummary.textContent = safePretty(data);
+    renderDebug();
+    const size = Array.isArray(data) ? data.length : 0;
+    pushActivity(`重建任务列表已刷新，共 ${size} 条。`, "warn");
+  } catch (error) {
+    handleError("加载重建任务列表失败", error);
   }
 }
 

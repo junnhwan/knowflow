@@ -119,7 +119,12 @@ func (o *Orchestrator) maybeAutoWriteback(ctx context.Context, result preparedQu
 		Citations: result.citations,
 	})
 	if err != nil {
+		if o.knowledgeObserver != nil {
+			o.knowledgeObserver.RecordKnowledgeExtraction("fallback")
+		}
 		draft = buildFallbackKnowledgeDraft(result.request.Message, answer, result.citations)
+	} else if o.knowledgeObserver != nil {
+		o.knowledgeObserver.RecordKnowledgeExtraction("success")
 	}
 	_, err = o.tools.Execute(ctx, "upsert_knowledge", map[string]any{
 		"user_id":           result.request.UserID,

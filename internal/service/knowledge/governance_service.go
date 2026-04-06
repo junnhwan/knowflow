@@ -33,9 +33,15 @@ type EntryReindexer interface {
 	ReindexEntry(ctx context.Context, entryID string) (IndexResult, error)
 }
 
+type GovernanceObserver interface {
+	RecordKnowledgeDedupe(result string)
+	RecordKnowledgeMerge(result string)
+}
+
 type GovernanceConfig struct {
 	Now                 func() time.Time
 	MaxDedupeCandidates int
+	Observer            GovernanceObserver
 }
 
 type ListFilter struct {
@@ -86,6 +92,7 @@ type GovernanceService struct {
 	embedder            llm.Embedder
 	now                 func() time.Time
 	maxDedupeCandidates int
+	observer            GovernanceObserver
 }
 
 func NewGovernanceService(entries GovernanceEntryStore, chunks ChunkCleaner, searcher VectorCandidateSearcher, indexer EntryReindexer, embedder llm.Embedder, cfg GovernanceConfig) *GovernanceService {
@@ -104,6 +111,7 @@ func NewGovernanceService(entries GovernanceEntryStore, chunks ChunkCleaner, sea
 		embedder:            embedder,
 		now:                 now,
 		maxDedupeCandidates: cfg.MaxDedupeCandidates,
+		observer:            cfg.Observer,
 	}
 }
 
@@ -230,6 +238,9 @@ func (s *GovernanceService) MergeEntries(ctx context.Context, req MergeEntriesRe
 			return MergeResult{}, err
 		}
 	}
+	if s.observer != nil {
+		s.observer.RecordKnowledgeMerge("success")
+	}
 	return MergeResult{
 		SourceEntry: source,
 		TargetEntry: target,
@@ -296,6 +307,9 @@ func (s *GovernanceService) findDedupeCandidates(ctx context.Context, entry know
 	})
 	if len(out) > s.maxDedupeCandidates {
 		out = out[:s.maxDedupeCandidates]
+	}
+	if len(out) > 0 && s.observer != nil {
+		s.observer.RecordKnowledgeDedupe("candidate")
 	}
 	return out, nil
 }

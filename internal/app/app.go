@@ -84,7 +84,7 @@ func New(cfg config.Config) (*App, error) {
 		knowledgeRepo,
 		knowledgeReindexer{knowledge: knowledgeIndexService},
 		embedder,
-		knowledgeservice.GovernanceConfig{},
+		knowledgeservice.GovernanceConfig{Observer: metrics},
 	)
 	searchRepo := pgrepo.NewHybridSearchRepository(documentRepo, knowledgeRepo)
 	retrievalService := retrieval.NewService(embedder, searchRepo, reranker, retrieval.Config{
@@ -140,6 +140,7 @@ func New(cfg config.Config) (*App, error) {
 		OutputGuardrail:    guardrailService,
 		GuardrailObserver:  metrics,
 		GuardrailLogger:    logger,
+		KnowledgeObserver:  metrics,
 		Answerer:           chatservice.NewTelemetryAnswerer(providerLabel, answerer, metrics),
 	})
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())

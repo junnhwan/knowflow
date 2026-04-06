@@ -10,6 +10,9 @@ func TestMetricsRegistry_RegistersRAGCounters(t *testing.T) {
 	reg.RecordRAGHit("demo-user", "s-1")
 	reg.RecordGuardrailReject("/api/chat/query", "prompt_injection")
 	reg.RecordReindexTask("document", "success")
+	reg.RecordKnowledgeExtraction("success")
+	reg.RecordKnowledgeDedupe("candidate")
+	reg.RecordKnowledgeMerge("success")
 
 	body, err := reg.Expose()
 	if err != nil {
@@ -24,5 +27,14 @@ func TestMetricsRegistry_RegistersRAGCounters(t *testing.T) {
 	}
 	if !strings.Contains(body, "knowflow_reindex_task_total") {
 		t.Fatalf("expected reindex task metric to be exposed")
+	}
+	if !strings.Contains(body, "knowflow_knowledge_extract_total") {
+		t.Fatalf("expected knowledge extract metric to be exposed")
+	}
+	if !strings.Contains(body, "knowflow_knowledge_dedupe_total") {
+		t.Fatalf("expected knowledge dedupe metric to be exposed")
+	}
+	if !strings.Contains(body, "knowflow_knowledge_merge_total") {
+		t.Fatalf("expected knowledge merge metric to be exposed")
 	}
 }

@@ -21,6 +21,9 @@ type Metrics struct {
 	reindexTasks     *prometheus.CounterVec
 	toolCalls        *prometheus.CounterVec
 	toolCallFailures *prometheus.CounterVec
+	knowledgeExtract *prometheus.CounterVec
+	knowledgeDedupe  *prometheus.CounterVec
+	knowledgeMerge   *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -56,6 +59,18 @@ func NewMetrics() *Metrics {
 			Name: "knowflow_reindex_task_total",
 			Help: "Total background reindex tasks",
 		}, []string{"target_type", "result"}),
+		knowledgeExtract: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "knowflow_knowledge_extract_total",
+			Help: "Total knowledge extraction attempts",
+		}, []string{"result"}),
+		knowledgeDedupe: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "knowflow_knowledge_dedupe_total",
+			Help: "Total knowledge dedupe detections",
+		}, []string{"result"}),
+		knowledgeMerge: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "knowflow_knowledge_merge_total",
+			Help: "Total knowledge merge operations",
+		}, []string{"result"}),
 		toolCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "knowflow_tool_call_total",
 			Help: "Total tool calls",
@@ -74,6 +89,9 @@ func NewMetrics() *Metrics {
 		metrics.rerankFallbacks,
 		metrics.guardrailRejects,
 		metrics.reindexTasks,
+		metrics.knowledgeExtract,
+		metrics.knowledgeDedupe,
+		metrics.knowledgeMerge,
 		metrics.toolCalls,
 		metrics.toolCallFailures,
 	)
@@ -99,6 +117,18 @@ func (m *Metrics) RecordGuardrailReject(endpoint, reason string) {
 
 func (m *Metrics) RecordReindexTask(targetType, result string) {
 	m.reindexTasks.WithLabelValues(strings.ToLower(targetType), strings.ToLower(result)).Inc()
+}
+
+func (m *Metrics) RecordKnowledgeExtraction(result string) {
+	m.knowledgeExtract.WithLabelValues(strings.ToLower(result)).Inc()
+}
+
+func (m *Metrics) RecordKnowledgeDedupe(result string) {
+	m.knowledgeDedupe.WithLabelValues(strings.ToLower(result)).Inc()
+}
+
+func (m *Metrics) RecordKnowledgeMerge(result string) {
+	m.knowledgeMerge.WithLabelValues(strings.ToLower(result)).Inc()
 }
 
 func (m *Metrics) RecordToolCall(toolName string, success bool) {
