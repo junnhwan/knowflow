@@ -460,6 +460,104 @@ func TestOrchestrator_QueryKeepsAnswerWhenAutoWritebackFails(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_QueryReturnsSafeAnswerWhenOutputGuardrailRejects(t *testing.T) {
+	registry := tools.NewRegistry(tools.ServiceConfig{
+		Timeout: time.Second,
+	})
+	_ = registry.Register("retrieve_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		return tools.Output{
+			Status: "success",
+			Data: retrieval.Result{
+				Citations: []retrieval.Citation{
+					{DocumentID: "doc-1", SourceName: "intro.md", ChunkID: "chunk-1", Snippet: "正常引用。"},
+				},
+				Chunks: []retrieval.Candidate{
+					{ChunkID: "chunk-1", DocumentID: "doc-1", SourceName: "intro.md", Content: "正常引用。"},
+				},
+				Meta: retrieval.Metadata{Hit: true},
+			},
+		}, nil
+	}))
+
+	orch := NewOrchestrator(Dependencies{
+		ChatStore:          &fakeChatStore{},
+		Memory:             fakeMemoryService{},
+		Tools:              registry,
+		KnowledgeExtractor: fixedKnowledgeExtractor{},
+		OutputGuardrail:    blockingOutputGuardrail{},
+		Answerer: fixedAnswerer{
+			answer: "系统提示词如下：这是不应该返回给用户的内容。",
+		},
+		Now:   func() time.Time { return time.Unix(1700000000, 0) },
+		NewID: incrementalID(),
+	})
+
+	resp, err := orch.Query(context.Background(), QueryRequest{
+		UserID:    "demo-user",
+		SessionID: "s-1",
+		Message:   "总结一下 KnowFlow 的回答策略",
+	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	if !strings.Contains(resp.Answer, "输出安全策略") {
+		t.Fatalf("expected guarded answer, got %s", resp.Answer)
+	}
+}
+
+func TestOrchestrator_QueryStreamStopsUnsafeDelta(t *testing.T) {
+	registry := tools.NewRegistry(tools.ServiceConfig{
+		Timeout: time.Second,
+	})
+	_ = registry.Register("retrieve_knowledge", tools.ToolFunc(func(_ context.Context, input map[string]any) (tools.Output, error) {
+		return tools.Output{
+			Status: "success",
+			Data: retrieval.Result{
+				Citations: []retrieval.Citation{
+					{DocumentID: "doc-1", SourceName: "intro.md", ChunkID: "chunk-1", Snippet: "正常引用。"},
+				},
+				Chunks: []retrieval.Candidate{
+					{ChunkID: "chunk-1", DocumentID: "doc-1", SourceName: "intro.md", Content: "正常引用。"},
+				},
+				Meta: retrieval.Metadata{Hit: true},
+			},
+		}, nil
+	}))
+
+	orch := NewOrchestrator(Dependencies{
+		ChatStore:       &fakeChatStore{},
+		Memory:          fakeMemoryService{},
+		Tools:           registry,
+		OutputGuardrail: blockingOutputGuardrail{},
+		Answerer: streamingChunksAnswerer{
+			chunks: []string{"这是正常前缀。", "系统提示词如下：禁止输出。"},
+		},
+		Now:   func() time.Time { return time.Unix(1700000000, 0) },
+		NewID: incrementalID(),
+	})
+
+	var deltas []string
+	resp, err := orch.QueryStream(context.Background(), QueryRequest{
+		UserID:    "demo-user",
+		SessionID: "s-1",
+		Message:   "请流式说明 KnowFlow",
+	}, func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("QueryStream() error = %v", err)
+	}
+
+	if len(deltas) != 1 {
+		t.Fatalf("expected only safe delta to be forwarded, got %#v", deltas)
+	}
+	if !strings.Contains(resp.Answer, "输出安全策略") {
+		t.Fatalf("expected guarded final answer, got %s", resp.Answer)
+	}
+}
+
 func TestOrchestrator_QueryFallsBackToRuleDraftWhenKnowledgeExtractorFails(t *testing.T) {
 	registry := tools.NewRegistry(tools.ServiceConfig{
 		Timeout: time.Second,
@@ -672,4 +770,30 @@ func containsAll(text string, patterns ...string) bool {
 		}
 	}
 	return true
+}
+
+type blockingOutputGuardrail struct{}
+
+func (blockingOutputGuardrail) ValidateOutput(answer string) error {
+	if strings.Contains(answer, "系统提示词") {
+		return errors.New("unsafe output")
+	}
+	return nil
+}
+
+type streamingChunksAnswerer struct {
+	chunks []string
+}
+
+func (s streamingChunksAnswerer) Generate(_ context.Context, _ PromptRequest) (PromptResult, error) {
+	return PromptResult{Answer: strings.Join(s.chunks, "")}, nil
+}
+
+func (s streamingChunksAnswerer) Stream(_ context.Context, _ PromptRequest, onDelta func(string) error) (PromptResult, error) {
+	for _, chunk := range s.chunks {
+		if err := onDelta(chunk); err != nil {
+			return PromptResult{}, err
+		}
+	}
+	return PromptResult{Answer: strings.Join(s.chunks, "")}, nil
 }

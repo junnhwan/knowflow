@@ -6,6 +6,7 @@ import (
 	"knowflow/internal/config"
 	"knowflow/internal/platform/llm"
 	chatservice "knowflow/internal/service/chat"
+	"knowflow/internal/service/memory"
 )
 
 func TestBuildEmbedderUsesLocalModeByDefault(t *testing.T) {
@@ -94,6 +95,41 @@ func TestBuildKnowledgeExtractorUsesRemotePrimaryWhenConfigured(t *testing.T) {
 	fallback, ok := extractor.(chatservice.FallbackKnowledgeExtractor)
 	if !ok {
 		t.Fatalf("expected wrapped extractor, got %T", extractor)
+	}
+	if fallback.Primary == nil {
+		t.Fatalf("expected remote primary to be configured")
+	}
+}
+
+func TestBuildSummaryGeneratorUsesHeuristicFallbackInLocalMode(t *testing.T) {
+	generator := buildSummaryGenerator(config.Config{
+		Model: config.ModelConfig{
+			Provider: "local",
+		},
+	})
+
+	fallback, ok := generator.(memory.FallbackSummaryGenerator)
+	if !ok {
+		t.Fatalf("expected fallback summary generator, got %T", generator)
+	}
+	if fallback.Primary != nil {
+		t.Fatalf("expected no remote primary in local mode")
+	}
+}
+
+func TestBuildSummaryGeneratorUsesRemotePrimaryWhenConfigured(t *testing.T) {
+	generator := buildSummaryGenerator(config.Config{
+		Model: config.ModelConfig{
+			Provider:  "dashscope",
+			BaseURL:   "https://example.com/compatible-mode/v1",
+			APIKey:    "chat-key",
+			ChatModel: "qwen-plus",
+		},
+	})
+
+	fallback, ok := generator.(memory.FallbackSummaryGenerator)
+	if !ok {
+		t.Fatalf("expected fallback summary generator, got %T", generator)
 	}
 	if fallback.Primary == nil {
 		t.Fatalf("expected remote primary to be configured")

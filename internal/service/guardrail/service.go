@@ -15,6 +15,7 @@ type Service struct {
 	injectionRules    []string
 	exfiltrationRules []string
 	sensitiveTargets  []string
+	outputLeakRules   []string
 }
 
 func NewService(cfg Config) *Service {
@@ -52,6 +53,16 @@ func NewService(cfg Config) *Service {
 			"私钥",
 			"密钥",
 		},
+		outputLeakRules: []string{
+			"系统提示词如下",
+			"system prompt:",
+			"api key:",
+			"apikey:",
+			"access key:",
+			"内部配置如下",
+			"bearer ",
+			"sk-",
+		},
 	}
 }
 
@@ -72,6 +83,19 @@ func (s *Service) Validate(message string) error {
 	}
 	if containsSensitiveExfiltration(lower, s.exfiltrationRules, s.sensitiveTargets) {
 		return violation("sensitive_request", "消息涉及敏感信息请求，已拒绝处理")
+	}
+	return nil
+}
+
+func (s *Service) ValidateOutput(message string) error {
+	trimmed := strings.TrimSpace(strings.ToLower(message))
+	if trimmed == "" {
+		return nil
+	}
+	for _, rule := range s.outputLeakRules {
+		if strings.Contains(trimmed, strings.ToLower(rule)) {
+			return violation("unsafe_output", "回答命中输出安全规则，已停止返回")
+		}
 	}
 	return nil
 }

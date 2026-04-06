@@ -36,6 +36,18 @@ type KnowledgeExtractor interface {
 	Extract(ctx context.Context, req KnowledgeExtractionRequest) (KnowledgeDraft, error)
 }
 
+type OutputGuardrail interface {
+	ValidateOutput(answer string) error
+}
+
+type GuardrailObserver interface {
+	RecordGuardrailReject(endpoint, reason string)
+}
+
+type GuardrailLogger interface {
+	Warn(msg string, args ...any)
+}
+
 type Answerer interface {
 	Generate(ctx context.Context, req PromptRequest) (PromptResult, error)
 	Stream(ctx context.Context, req PromptRequest, onDelta func(string) error) (PromptResult, error)
@@ -46,6 +58,9 @@ type Dependencies struct {
 	Memory             MemoryService
 	Tools              ToolExecutor
 	KnowledgeExtractor KnowledgeExtractor
+	OutputGuardrail    OutputGuardrail
+	GuardrailObserver  GuardrailObserver
+	GuardrailLogger    GuardrailLogger
 	Answerer           Answerer
 	AutoKnowledge      AutoKnowledgeConfig
 	Now                func() time.Time
@@ -84,6 +99,9 @@ type Orchestrator struct {
 	memory             MemoryService
 	tools              ToolExecutor
 	knowledgeExtractor KnowledgeExtractor
+	outputGuardrail    OutputGuardrail
+	guardrailObserver  GuardrailObserver
+	guardrailLogger    GuardrailLogger
 	answerer           Answerer
 	autoKnowledge      AutoKnowledgeConfig
 	now                func() time.Time
@@ -106,6 +124,9 @@ func NewOrchestrator(deps Dependencies) *Orchestrator {
 		memory:             deps.Memory,
 		tools:              deps.Tools,
 		knowledgeExtractor: defaultKnowledgeExtractor(deps.KnowledgeExtractor),
+		outputGuardrail:    deps.OutputGuardrail,
+		guardrailObserver:  deps.GuardrailObserver,
+		guardrailLogger:    deps.GuardrailLogger,
 		answerer:           deps.Answerer,
 		autoKnowledge:      defaultAutoKnowledgeConfig(deps.AutoKnowledge),
 		now:                now,
@@ -127,7 +148,7 @@ func (o *Orchestrator) Query(ctx context.Context, req QueryRequest) (QueryRespon
 		return QueryResponse{}, err
 	}
 
-	return o.finalizeQuery(ctx, result, promptResult.Answer)
+	return o.finalizeQuery(ctx, result, o.guardOutput("/api/chat/query#output", result.sessionID, result.request.UserID, promptResult.Answer))
 }
 
 func (o *Orchestrator) QueryStream(ctx context.Context, req QueryRequest, onDelta func(string) error) (QueryResponse, error) {
@@ -136,6 +157,7 @@ func (o *Orchestrator) QueryStream(ctx context.Context, req QueryRequest, onDelt
 		return QueryResponse{}, err
 	}
 	if result.response != nil {
+		result.response.Answer = o.guardOutput("/api/chat/query/stream#output", result.sessionID, result.request.UserID, result.response.Answer)
 		if onDelta != nil {
 			if err := onDelta(result.response.Answer); err != nil {
 				return QueryResponse{}, err
@@ -144,12 +166,31 @@ func (o *Orchestrator) QueryStream(ctx context.Context, req QueryRequest, onDelt
 		return *result.response, nil
 	}
 
-	promptResult, err := o.answerer.Stream(ctx, result.prompt, onDelta)
+	var streamed strings.Builder
+	promptResult, err := o.answerer.Stream(ctx, result.prompt, func(delta string) error {
+		candidate := streamed.String() + delta
+		if guardErr := o.validateOutput(candidate); guardErr != nil {
+			return outputBlockedError{err: guardErr}
+		}
+		streamed.WriteString(delta)
+		if onDelta != nil {
+			return onDelta(delta)
+		}
+		return nil
+	})
 	if err != nil {
+		var blocked outputBlockedError
+		if errors.As(err, &blocked) {
+			return o.finalizeQuery(ctx, result, o.guardOutput("/api/chat/query/stream#output", result.sessionID, result.request.UserID, safeOutputAnswer()))
+		}
 		return QueryResponse{}, err
 	}
 
-	return o.finalizeQuery(ctx, result, promptResult.Answer)
+	answer := promptResult.Answer
+	if streamed.Len() > 0 {
+		answer = streamed.String()
+	}
+	return o.finalizeQuery(ctx, result, o.guardOutput("/api/chat/query/stream#output", result.sessionID, result.request.UserID, answer))
 }
 
 type preparedQuery struct {
@@ -328,4 +369,45 @@ func extractRetrievalResult(output tools.Output) retrieval.Result {
 		return result
 	}
 	return retrieval.Result{}
+}
+
+type outputBlockedError struct {
+	err error
+}
+
+func (e outputBlockedError) Error() string {
+	if e.err == nil {
+		return "output blocked"
+	}
+	return e.err.Error()
+}
+
+func (o *Orchestrator) validateOutput(answer string) error {
+	if o.outputGuardrail == nil {
+		return nil
+	}
+	return o.outputGuardrail.ValidateOutput(answer)
+}
+
+func (o *Orchestrator) guardOutput(endpoint, sessionID, userID, answer string) string {
+	if err := o.validateOutput(answer); err != nil {
+		reason := "unsafe_output"
+		if o.guardrailObserver != nil {
+			o.guardrailObserver.RecordGuardrailReject(endpoint, reason)
+		}
+		if o.guardrailLogger != nil {
+			o.guardrailLogger.Warn("guardrail rejected response",
+				"path", endpoint,
+				"user_id", userID,
+				"session_id", sessionID,
+				"reason", reason,
+			)
+		}
+		return safeOutputAnswer()
+	}
+	return answer
+}
+
+func safeOutputAnswer() string {
+	return "当前回答命中输出安全策略，已停止返回，请换个问法或补充更明确的资料。"
 }

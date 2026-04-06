@@ -93,7 +93,7 @@ func New(cfg config.Config) (*App, error) {
 		RRFK:        60,
 	})
 	retrievalService.SetTelemetry(metrics)
-	memoryService := memory.NewService(memoryStore, memory.NewCompressor(memory.HeuristicSummaryGenerator{}, memory.CompressorConfig{
+	memoryService := memory.NewService(memoryStore, memory.NewCompressor(buildSummaryGenerator(cfg), memory.CompressorConfig{
 		RecentRounds:    cfg.Memory.RecentRounds,
 		TokenThreshold:  cfg.Memory.TokenThreshold,
 		SummaryTokenCap: 256,
@@ -126,15 +126,18 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	guardrailService := guardrail.NewService(guardrail.Config{MaxMessageLength: 2000})
 
 	orchestrator := chatservice.NewOrchestrator(chatservice.Dependencies{
 		ChatStore:          chatRepo,
 		Memory:             memoryService,
 		Tools:              registry,
 		KnowledgeExtractor: buildKnowledgeExtractor(cfg),
+		OutputGuardrail:    guardrailService,
+		GuardrailObserver:  metrics,
+		GuardrailLogger:    logger,
 		Answerer:           chatservice.NewTelemetryAnswerer(providerLabel, answerer, metrics),
 	})
-	guardrailService := guardrail.NewService(guardrail.Config{MaxMessageLength: 2000})
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	reindexWorker := reindexer.NewService(
 		documentRepo,
@@ -226,6 +229,26 @@ func buildKnowledgeExtractor(cfg config.Config) chatservice.KnowledgeExtractor {
 	}
 	return chatservice.FallbackKnowledgeExtractor{
 		Primary: chatservice.LLMKnowledgeExtractor{
+			Generator: llm.OpenAICompatibleTextGenerator{
+				BaseURL:     cfg.Model.BaseURL,
+				APIKey:      cfg.Model.APIKey,
+				Model:       cfg.Model.ChatModel,
+				Temperature: 0.1,
+			},
+		},
+		Fallback: fallback,
+	}
+}
+
+func buildSummaryGenerator(cfg config.Config) memory.SummaryGenerator {
+	fallback := memory.HeuristicSummaryGenerator{}
+	if cfg.Model.Provider == "local" || cfg.Model.APIKey == "" {
+		return memory.FallbackSummaryGenerator{
+			Fallback: fallback,
+		}
+	}
+	return memory.FallbackSummaryGenerator{
+		Primary: memory.LLMSummaryGenerator{
 			Generator: llm.OpenAICompatibleTextGenerator{
 				BaseURL:     cfg.Model.BaseURL,
 				APIKey:      cfg.Model.APIKey,
